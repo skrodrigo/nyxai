@@ -59,6 +59,7 @@ import { DeleteDialog } from './_components/delete-dialog';
 import { RenameDialog } from './_components/rename-dialog';
 import { ShareDialog } from './_components/share-dialog';
 import { SpotlightDialog } from './_components/spotlight-dialog';
+import { routing } from '@/i18n/routing';
 
 const models = [
   {
@@ -132,12 +133,18 @@ const imageModels = [
   },
   {
     name: 'DALL-E',
-    value: 'openai/gpt-5-nano',
+    value: 'openai/dall-e-3',
     icon: <NextImage src="/models/dalle.svg" alt="openai" width={20} height={20} priority quality={100} />,
   },
 ]
 
-const NEW_CHAT_MODEL_KEY = 'new-chat-model';
+const NEW_CHAT_TEXT_MODEL_KEY = 'new-chat-text-model'
+const NEW_CHAT_IMAGE_MODEL_KEY = 'new-chat-image-model'
+const NEW_CHAT_TAB_KEY = 'new-chat-tab'
+
+function chatModelKey(chatId: string, key: string) {
+  return `chat:${chatId}:${key}`
+}
 
 function toUiMessages(rawMessages: any[]): UIMessage[] {
   if (!Array.isArray(rawMessages)) return []
@@ -195,8 +202,10 @@ function toUiMessages(rawMessages: any[]): UIMessage[] {
 function getLocaleFromPathname(pathname: string | null) {
   if (!pathname) return null
   const parts = pathname.split('/').filter(Boolean)
-  const locale = parts[0] ?? null
-  return locale
+  const candidate = parts[0] ?? null
+  if (!candidate) return null
+  if (!routing.locales.includes(candidate as typeof routing.locales[number])) return null
+  return candidate
 }
 
 export function Chat({
@@ -217,19 +226,44 @@ export function Chat({
   const t = useTranslations('chat')
   const router = useRouter();
   const pathname = usePathname()
+  const [runtimeChatId, setRuntimeChatId] = useState<string | undefined>(chatId)
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<AttachmentData[]>([]);
   const attachmentsRef = useRef<AttachmentData[]>([]);
+  const effectiveChatId = chatId ?? runtimeChatId
   const [model, setModel] = useState<string>(() => {
     if (initialModel && models.some((m) => m.value === initialModel)) return initialModel
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(NEW_CHAT_TEXT_MODEL_KEY)
+      if (saved && models.some((m) => m.value === saved)) return saved
+    }
     return models[0].value
   })
   const [modelTab, setModelTab] = useState<'text' | 'image'>(() => {
+    const hasFileMessage = Array.isArray(initialMessages)
+      ? initialMessages.some((m) => (m as any)?.parts?.some((p: any) => p?.type === 'file'))
+      : false
     if (initialModel && imageModels.some((m) => m.value === initialModel)) return 'image'
+    if (hasFileMessage) return 'image'
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(NEW_CHAT_TAB_KEY)
+      if (saved === 'text' || saved === 'image') return saved
+    }
     return 'text'
   })
   const [imageModel, setImageModel] = useState<string>(() => {
+    if (initialModel === 'openai/gpt-5-nano') {
+      const hasFileMessage = Array.isArray(initialMessages)
+        ? initialMessages.some((m) => (m as any)?.parts?.some((p: any) => p?.type === 'file'))
+        : false
+      if (hasFileMessage) return 'openai/dall-e-3'
+    }
     if (initialModel && imageModels.some((m) => m.value === initialModel)) return initialModel
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem(NEW_CHAT_IMAGE_MODEL_KEY)
+      if (saved === 'openai/gpt-5-nano') return 'openai/dall-e-3'
+      if (saved && imageModels.some((m) => m.value === saved)) return saved
+    }
     return imageModels[0].value
   })
   const [title, setTitle] = useState(initialTitle ?? '')
@@ -250,8 +284,8 @@ export function Chat({
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null)
 
   const { artifacts, selectedArtifact, isPanelOpen, openPanel, closePanel } = useArtifacts({
-    chatId,
-    enabled: Boolean(chatId),
+    chatId: effectiveChatId,
+    enabled: Boolean(effectiveChatId),
   })
 
   const isMobile = useIsMobile()
@@ -275,6 +309,10 @@ export function Chat({
   const selectedImageModel = imageModels.find((m) => m.value === imageModel)
   const canWebSearch = modelSupportsWebSearch(model);
   const [isPro, setIsPro] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    setRuntimeChatId(chatId)
+  }, [chatId])
 
   const { messages, status, regenerate, setMessages } = useChat({
     onError: (error: any) => {
@@ -301,11 +339,76 @@ export function Chat({
   }, [initialBranchId])
 
   useEffect(() => {
-    if (chatId) return
-    const saved = localStorage.getItem(NEW_CHAT_MODEL_KEY)
-    if (!saved) return
-    if (!models.some((m) => m.value === saved)) return
-    setModel(saved)
+    if (typeof window === 'undefined') return
+    if (!chatId) return
+
+    const savedTab = localStorage.getItem(chatModelKey(chatId, 'tab'))
+    if (savedTab === 'text' || savedTab === 'image') {
+      setModelTab(savedTab)
+    }
+
+    const savedTextModel = localStorage.getItem(chatModelKey(chatId, 'textModel'))
+    if (savedTextModel && models.some((m) => m.value === savedTextModel)) {
+      setModel(savedTextModel)
+    }
+
+    const savedImageModel = localStorage.getItem(chatModelKey(chatId, 'imageModel'))
+    if (savedImageModel && imageModels.some((m) => m.value === savedImageModel)) {
+      setImageModel(savedImageModel)
+    }
+  }, [chatId])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (!chatId) {
+      localStorage.setItem(NEW_CHAT_TAB_KEY, modelTab)
+      if (models.some((m) => m.value === model)) {
+        localStorage.setItem(NEW_CHAT_TEXT_MODEL_KEY, model)
+      }
+      if (imageModels.some((m) => m.value === imageModel)) {
+        localStorage.setItem(NEW_CHAT_IMAGE_MODEL_KEY, imageModel)
+      }
+      return
+    }
+
+    localStorage.setItem(chatModelKey(chatId, 'tab'), modelTab)
+    if (models.some((m) => m.value === model)) {
+      localStorage.setItem(chatModelKey(chatId, 'textModel'), model)
+    }
+    if (imageModels.some((m) => m.value === imageModel)) {
+      localStorage.setItem(chatModelKey(chatId, 'imageModel'), imageModel)
+    }
+  }, [chatId, imageModel, model, modelTab])
+
+  const applySelectedModel = useCallback(async (value: string) => {
+    const isText = models.some((m) => m.value === value)
+    const isImage = imageModels.some((m) => m.value === value)
+
+    if (isText) {
+      setModelTab('text')
+      setModel(value)
+      if (!modelSupportsWebSearch(value)) {
+        setWebSearch(false)
+      }
+      if (chatId) {
+        try {
+          await chatService.updateModel(chatId, value)
+        } catch {
+        }
+      }
+      return
+    }
+
+    if (isImage) {
+      setModelTab('image')
+      setImageModel(value)
+      if (chatId) {
+        try {
+          await chatService.updateModel(chatId, value)
+        } catch {
+        }
+      }
+    }
   }, [chatId])
 
   useEffect(() => {
@@ -393,13 +496,14 @@ export function Chat({
     const updatedMessages = [...messages, userMessage];
     setMessages(updatedMessages);
 
-    let assistantMessageIdFromServer: string | null = null
-
     const assistantMessage: UIMessage = {
-      id: (Date.now() + 1).toString(),
+      id: nanoid(),
       role: 'assistant',
       parts: [{ type: 'text', text: '' }],
     };
+
+    const assistantMessageIdRef = { current: assistantMessage.id }
+    let assistantMessageIdFromServer: string | null = null
 
     setMessages([...updatedMessages, assistantMessage]);
     setIsStreaming(true);
@@ -407,7 +511,7 @@ export function Chat({
     try {
       if (modelTab === 'image') {
         const result = await imagesService.generate({
-          chatId,
+          chatId: effectiveChatId,
           prompt: trimmedInput,
           model: imageModel,
           returnBase64Preview: true,
@@ -458,7 +562,9 @@ export function Chat({
             const nextPath = locale
               ? `/${locale}/chat/${result.chatId}`
               : `/chat/${result.chatId}`
-            window.location.href = nextPath
+            setRuntimeChatId(result.chatId)
+            window.history.replaceState(null, '', nextPath)
+            router.replace(nextPath)
           }
           return
         }
@@ -478,19 +584,30 @@ export function Chat({
           messages: updatedMessages,
           model,
           webSearch: canWebSearch ? webSearch : false,
-          chatId,
+          chatId: effectiveChatId,
           branchId: activeBranchId,
         },
         onEvent: (ev) => {
           if (ev.type === 'chat.created') {
             createdChatId = ev.chatId
+            if (!effectiveChatId) {
+              setRuntimeChatId(ev.chatId)
+              if (typeof window !== 'undefined' && !isTemporary) {
+                const locale = getLocaleFromPathname(pathname)
+                const nextPath = locale ? `/${locale}/chat/${ev.chatId}` : `/chat/${ev.chatId}`
+                window.history.replaceState(null, '', nextPath)
+                window.dispatchEvent(new Event('chats:refresh'))
+              }
+            }
             if (typeof ev.branchId === 'string') setActiveBranchId(ev.branchId)
             if (typeof ev.assistantMessageId === 'string') {
-              assistantMessageIdFromServer = ev.assistantMessageId
+              const prevId = assistantMessageIdRef.current
               const newId = ev.assistantMessageId
+              assistantMessageIdFromServer = newId
+              assistantMessageIdRef.current = newId
               setMessages((prev: UIMessage[]) =>
                 prev.map((msg: UIMessage) =>
-                  msg.id === assistantMessage.id
+                  msg.id === prevId || msg.id === assistantMessage.id
                     ? { ...msg, id: newId }
                     : msg,
                 ),
@@ -510,7 +627,7 @@ export function Chat({
             accumulatedText += ev.delta
             setMessages((prev: UIMessage[]) =>
               prev.map((msg: UIMessage) =>
-                msg.id === assistantMessage.id
+                msg.id === assistantMessageIdRef.current || msg.id === assistantMessage.id
                   ? { ...msg, parts: [{ type: 'text', text: accumulatedText }] }
                   : msg,
               ),
@@ -545,15 +662,24 @@ export function Chat({
           if (
             !isTemporary &&
             accumulatedText.trim() &&
-            typeof lastAssistant?.id === 'string'
+            (typeof assistantMessageIdFromServer === 'string' || typeof lastAssistant?.id === 'string')
           ) {
+            const targetAssistantMessageId =
+              typeof assistantMessageIdFromServer === 'string'
+                ? assistantMessageIdFromServer
+                : lastAssistant.id
+
             artifactService.queueArtifactProcessing({
               chatId: finalChatId,
-              messageId: lastAssistant.id,
+              messageId: targetAssistantMessageId,
               userMessage: trimmedInput,
             }).catch((err: unknown) => {
               console.error('Failed to queue artifact:', err)
             })
+
+            if (typeof window !== 'undefined') {
+              window.dispatchEvent(new Event('artifacts:refresh'))
+            }
           }
         } catch {
         }
@@ -564,7 +690,7 @@ export function Chat({
         const nextPath = locale
           ? `/${locale}/chat/${createdChatId}`
           : `/chat/${createdChatId}`
-        router.push(nextPath)
+        router.replace(nextPath)
       }
     } catch (error) {
       setIsStreaming(false);
@@ -691,25 +817,7 @@ export function Chat({
             <div className="absolute top-0 left-0 right-0 py-1 flex items-center gap-2 z-20 bg-background">
               <SidebarTrigger />
               <PromptInputModelSelect
-                onValueChange={async (value) => {
-                  if (modelTab === 'text') {
-                    setModel(value)
-                    if (!modelSupportsWebSearch(value)) {
-                      setWebSearch(false)
-                    }
-                    if (chatId) {
-                      try {
-                        await chatService.updateModel(chatId, value)
-                      } catch {
-                      }
-                    } else {
-                      localStorage.setItem(NEW_CHAT_MODEL_KEY, value)
-                    }
-                    return
-                  }
-
-                  setImageModel(value)
-                }}
+                onValueChange={applySelectedModel}
                 value={modelTab === 'text' ? model : imageModel}
               >
                 <TooltipProvider>
@@ -1069,25 +1177,7 @@ export function Chat({
               <div className="absolute top-0 left-0 right-0 py-1 flex items-center gap-2 z-20 bg-background px-2">
                 <SidebarTrigger />
                 <PromptInputModelSelect
-                  onValueChange={async (value) => {
-                    if (modelTab === 'text') {
-                      setModel(value)
-                      if (!modelSupportsWebSearch(value)) {
-                        setWebSearch(false)
-                      }
-                      if (chatId) {
-                        try {
-                          await chatService.updateModel(chatId, value)
-                        } catch {
-                        }
-                      } else {
-                        localStorage.setItem(NEW_CHAT_MODEL_KEY, value)
-                      }
-                      return
-                    }
-
-                    setImageModel(value)
-                  }}
+                  onValueChange={applySelectedModel}
                   value={modelTab === 'text' ? model : imageModel}
                 >
                   <TooltipProvider>
@@ -1408,7 +1498,7 @@ export function Chat({
             <>
               <ResizableHandle withHandle />
               <ResizablePanel defaultSize={40} id="artifact-panel">
-                <div className="flex flex-col h-full bg-popover/40 backdrop-blur-2xl border-l">
+                <div className="flex flex-col h-full bg-muted border-l">
                   <div className="flex items-center justify-between p-4 border-b shrink-0">
                     <div className="flex items-center gap-2 min-w-0">
                       <h3 className="font-semibold truncate">{selectedArtifact.title}</h3>

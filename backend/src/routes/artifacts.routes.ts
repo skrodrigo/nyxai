@@ -55,7 +55,7 @@ artifactsRouter.post('/process', async (c) => {
 		console.log('[artifact-process] Generating artifact with AI SDK...')
 
 		const models = [
-			'minimax/minimax-m2.5',
+			'openai/gpt-4.1-nano',
 		] as const
 
 		let lastError: unknown = null

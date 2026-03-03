@@ -21,25 +21,16 @@ export default async function LocaleLayout({ children, params }: Props) {
 	const messages = await getMessages()
 
 	return (
-		<html lang={locale} suppressHydrationWarning>
-			<head>
-				<meta name="apple-mobile-web-app-title" content="Pumkin" />
-			</head>
-			<body className="antialiased" suppressHydrationWarning>
-				<NextIntlClientProvider messages={messages}>
-					<ThemeProvider
-						attribute="class"
-						defaultTheme="dark"
-						enableSystem
-						disableTransitionOnChange
-					>
-						<TooltipProvider>
-							{children}
-						</TooltipProvider>
-						<Toaster />
-					</ThemeProvider>
-				</NextIntlClientProvider>
-			</body>
-		</html>
+		<NextIntlClientProvider messages={messages}>
+			<ThemeProvider
+				attribute="class"
+				defaultTheme="dark"
+				enableSystem
+				disableTransitionOnChange
+			>
+				<TooltipProvider>{children}</TooltipProvider>
+				<Toaster />
+			</ThemeProvider>
+		</NextIntlClientProvider>
 	)
 }

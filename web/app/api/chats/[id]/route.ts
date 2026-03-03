@@ -13,14 +13,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }
 
   const upstream = await fetch(upstreamUrl.toString(), {
     headers: { Authorization: `Bearer ${auth.token}` },
-    next: {
-      tags: [
-        'chats:list',
-        `chat:${id}`,
-        `chat:${id}:branch:${branchId ?? 'default'}`,
-      ],
-      revalidate: 30,
-    },
+    cache: 'no-store',
   });
 
   return proxyJson(upstream);

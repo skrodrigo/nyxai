@@ -44,6 +44,7 @@ import { chatsService } from '@/data/chats'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { useTranslations } from 'next-intl'
 import type { Artifact } from '@/data/artifacts'
+import { routing } from '../../../../../i18n/routing'
 
 
 interface ChatMessagesProps {
@@ -65,6 +66,15 @@ interface ChatMessagesProps {
 	onOpenArtifact?: (artifact: Artifact) => void
 	selectedArtifactId: string | null
 	setSelectedArtifactId: (id: string | null) => void
+}
+
+function getLocaleFromPathname(pathname: string | null) {
+	if (!pathname) return null
+	const parts = pathname.split('/').filter(Boolean)
+	const candidate = parts[0] ?? null
+	if (!candidate) return null
+	if (!routing.locales.includes(candidate as typeof routing.locales[number])) return null
+	return candidate
 }
 
 
@@ -108,6 +118,17 @@ export function ChatMessages({
 	const [editingText, setEditingText] = useState('')
 	const editingTextareaRef = useRef<HTMLTextAreaElement | null>(null)
 	const isMobile = useIsMobile()
+
+	const stableMessageIds = messages.map((m, idx) => m.id ?? `m-${idx}`)
+	const stableMessageIdSet = useRef<Set<string>>(new Set())
+	stableMessageIdSet.current = new Set(stableMessageIds)
+	const unmatchedArtifacts = artifacts.filter((a) => !stableMessageIdSet.current.has(a.messageId))
+	const lastAssistantStableId = (() => {
+		for (let i = messages.length - 1; i >= 0; i -= 1) {
+			if (messages[i]?.role === 'assistant') return stableMessageIds[i] ?? null
+		}
+		return null
+	})()
 	const loadedBranchMessageIdsRef = useRef<Set<string>>(new Set())
 	const [messageBranches, setMessageBranches] = useState<
 		Record<
@@ -601,7 +622,8 @@ export function ChatMessages({
 																	setIsStreaming(false)
 
 																	if (!chatId && !isTemporary && createdChatId) {
-																		router.push(`/chat/${createdChatId}`)
+																		const locale = getLocaleFromPathname(window.location.pathname)
+																		router.push(locale ? `/${locale}/chat/${createdChatId}` : `/chat/${createdChatId}`)
 																	}
 																} catch (error) {
 																	setIsStreaming(false)
@@ -698,40 +720,53 @@ export function ChatMessages({
 													}
 												})}
 											</MessageContent>
-											{message.role === 'assistant' && artifacts.filter(a => a.messageId === messageStableId).length > 0 && (
-												<div className="flex flex-col gap-2 mt-3">
-													{artifacts.filter(a => a.messageId === messageStableId).map((artifact) => (
-														<Button
-															key={artifact.id}
-															variant='outline'
-															onClick={() => {
-																setSelectedArtifactId(artifact.id)
-																onOpenArtifact?.(artifact)
-															}}
-															className={`rounded-xl! h-14 max-w-md justify-between ${selectedArtifactId === artifact.id
-																? 'bg-background! border-border!'
-																: 'bg-muted!'
-																}`}
-															disabled={artifact.status === 'processing'}
-														>
-															<div className="flex flex-col justify-start items-start">
-																<p className="font-medium text-sm truncate">{artifact.title}</p>
-																{artifact.status === 'processing' ? (
-																	<div className="flex items-center gap-2">
-																		<div className="h-3 w-20 bg-muted-foreground/20 rounded animate-pulse" />
-																		<span className="text-xs text-muted-foreground">Gerando...</span>
-																	</div>
-																) : (
-																	<p className="text-xs text-muted-foreground">Clique para ver</p>
+											{(() => {
+												const relatedArtifacts = artifacts.filter(
+													(a) => a.messageId === messageStableId,
+												)
+												const fallbackArtifacts =
+													message.role === 'assistant' &&
+														messageStableId === lastAssistantStableId
+														? unmatchedArtifacts
+														: []
+												const allArtifacts = [...relatedArtifacts, ...fallbackArtifacts]
+												if (message.role !== 'assistant') return null
+												if (allArtifacts.length === 0) return null
+												return (
+													<div className="flex flex-col gap-2 mt-3">
+														{allArtifacts.map((artifact) => (
+															<Button
+																key={artifact.id}
+																variant='outline'
+																onClick={() => {
+																	setSelectedArtifactId(artifact.id)
+																	onOpenArtifact?.(artifact)
+																}}
+																className={`rounded-xl! h-14 max-w-md justify-between ${selectedArtifactId === artifact.id
+																	? 'bg-background! border-border!'
+																	: 'bg-muted!'
+																	}`}
+																disabled={artifact.status === 'processing'}
+															>
+																<div className="flex flex-col justify-start items-start">
+																	<p className="font-medium text-sm truncate">{artifact.title}</p>
+																	{artifact.status === 'processing' ? (
+																		<div className="flex items-center gap-2">
+																			<div className="h-3 w-20 bg-muted-foreground/20 rounded animate-pulse" />
+																			<span className="text-xs text-muted-foreground">Gerando...</span>
+																		</div>
+																	) : (
+																		<p className="text-xs text-muted-foreground">Clique para ver</p>
+																	)}
+																</div>
+																{artifact.status === 'processing' && (
+																	<span className="size-2 bg-primary rounded-full animate-pulse" />
 																)}
-															</div>
-															{artifact.status === 'processing' && (
-																<span className="size-2 bg-primary rounded-full animate-pulse" />
-															)}
-														</Button>
-													))}
-												</div>
-											)}
+															</Button>
+														))}
+													</div>
+												)
+											})()}
 											{message.role === 'assistant' && (
 												<Actions className="mt-2">
 													<Action
