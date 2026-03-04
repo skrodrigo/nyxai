@@ -19,7 +19,7 @@ import { meService, type MeUser } from "@/data/me";
 import { ArchivedChatsButton } from '@/components/sidebar/archived-chats-button'
 import { useTranslations, useLocale } from 'next-intl'
 import { Icon } from "../ui/icon";
-import { AddCircleHalfDotIcon } from "@hugeicons/core-free-icons";
+import { Edit03Icon } from "@hugeicons/core-free-icons";
 
 interface AppSidebarProps extends React.ComponentProps<typeof Sidebar> {
   chats: { id: string; title: string; pinnedAt?: string | null }[]
@@ -66,14 +66,17 @@ export default function AppSidebar({ chats: initialChats, ...props }: AppSidebar
         <Sidebar variant="floating" {...props}>
           <SidebarHeader >
             <div className="flex items-center gap-2">
-              <Image src="/logos/pumkin.svg" alt="Logo" width={16} height={16} priority quality={100} className="m-2" />
-              <h1 className="font-medium">Pumkin</h1>
+              <Image src="/logos/pumkin.svg" alt="Logo" width={100} height={100} priority quality={100} className="m-2" />
             </div>
-            <div className="mt-6 flex w-full flex-col gap-2">
+            <div className="mt-2 flex w-full flex-col">
               <Link href={locale === 'pt' ? '/chat' : `/${locale}/chat`} className="flex-1">
-                <Button variant='secondary' className="w-full h-10 md:h-10">
-                  <Icon icon={AddCircleHalfDotIcon} />
-                  {t('sidebar.newChat')}
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="w-full justify-start gap-2 px-2 h-9 rounded-full text-muted-foreground hover:text-foreground hover:bg-sidebar-accent"
+                >
+                  <Icon icon={Edit03Icon} className="size-[18px]" />
+                  <span>{t('sidebar.newChat')}</span>
                 </Button>
               </Link>
               <SidebarSearch chats={chats} />

@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { generateText } from 'ai'
+import { generateText, gateway } from 'ai'
 import { z } from 'zod'
 import { Receiver } from '@upstash/qstash'
 import { env } from './../common/env.js'
@@ -69,7 +69,7 @@ artifactsRouter.post('/process', async (c) => {
 			try {
 				console.log('[artifact-process] Trying model:', model)
 				const result = await generateText({
-					model,
+					model: gateway(model as any),
 					prompt: userMessage,
 				})
 				content = result.text

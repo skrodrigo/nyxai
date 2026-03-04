@@ -48,7 +48,7 @@ function ResizableHandle({
       {...props}
     >
       {withHandle && (
-        <div className="bg-muted z-10 px-[3px] ml-px rounded-full h-6 flex items-center justify-center border" />
+        <div className="bg-background z-10 px-[3px] ml-px rounded-full h-6 flex items-center justify-center border" />
 
       )}
     </Separator>

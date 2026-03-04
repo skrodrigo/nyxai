@@ -211,39 +211,21 @@ export function Chat({
   const [attachments, setAttachments] = useState<AttachmentData[]>([]);
   const attachmentsRef = useRef<AttachmentData[]>([]);
   const effectiveChatId = chatId ?? runtimeChatId
+  const hasFileMessage = Array.isArray(initialMessages)
+    ? initialMessages.some((m) => (m as any)?.parts?.some((p: any) => p?.type === 'file'))
+    : false
+  const initialModelTab: 'text' | 'image' =
+    (initialModel && imageModels.some((m) => m.value === initialModel)) || hasFileMessage
+      ? 'image'
+      : 'text'
   const [model, setModel] = useState<string>(() => {
     if (initialModel && models.some((m) => m.value === initialModel)) return initialModel
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(NEW_CHAT_TEXT_MODEL_KEY)
-      if (saved && models.some((m) => m.value === saved)) return saved
-    }
     return models[0].value
   })
-  const [modelTab, setModelTab] = useState<'text' | 'image'>(() => {
-    const hasFileMessage = Array.isArray(initialMessages)
-      ? initialMessages.some((m) => (m as any)?.parts?.some((p: any) => p?.type === 'file'))
-      : false
-    if (initialModel && imageModels.some((m) => m.value === initialModel)) return 'image'
-    if (hasFileMessage) return 'image'
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(NEW_CHAT_TAB_KEY)
-      if (saved === 'text' || saved === 'image') return saved
-    }
-    return 'text'
-  })
+  const [modelTab, setModelTab] = useState<'text' | 'image'>(initialModelTab)
   const [imageModel, setImageModel] = useState<string>(() => {
-    if (initialModel === 'openai/gpt-5-nano') {
-      const hasFileMessage = Array.isArray(initialMessages)
-        ? initialMessages.some((m) => (m as any)?.parts?.some((p: any) => p?.type === 'file'))
-        : false
-      if (hasFileMessage) return 'openai/dall-e-3'
-    }
+    if (initialModel === 'openai/gpt-5-nano' && hasFileMessage) return 'openai/dall-e-3'
     if (initialModel && imageModels.some((m) => m.value === initialModel)) return initialModel
-    if (typeof window !== 'undefined') {
-      const saved = localStorage.getItem(NEW_CHAT_IMAGE_MODEL_KEY)
-      if (saved === 'openai/gpt-5-nano') return 'openai/dall-e-3'
-      if (saved && imageModels.some((m) => m.value === saved)) return saved
-    }
     return imageModels[0].value
   })
   const [title, setTitle] = useState(initialTitle ?? '')
@@ -269,6 +251,29 @@ export function Chat({
   })
 
   const isMobile = useIsMobile()
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    const savedTab = localStorage.getItem(NEW_CHAT_TAB_KEY)
+    if (!hasFileMessage && !initialModel) {
+      if (savedTab === 'text' || savedTab === 'image') setModelTab(savedTab)
+    }
+
+    const savedTextModel = localStorage.getItem(NEW_CHAT_TEXT_MODEL_KEY)
+    if (!initialModel && savedTextModel && models.some((m) => m.value === savedTextModel)) {
+      setModel(savedTextModel)
+    }
+
+    const savedImageModel = localStorage.getItem(NEW_CHAT_IMAGE_MODEL_KEY)
+    if (
+      !initialModel &&
+      savedImageModel &&
+      imageModels.some((m) => m.value === savedImageModel)
+    ) {
+      setImageModel(savedImageModel)
+    }
+  }, [hasFileMessage, initialModel])
 
   const handleCloseArtifactPanel = useCallback(() => {
     setSelectedArtifactId(null)
@@ -1456,7 +1461,7 @@ export function Chat({
             <>
               <ResizableHandle withHandle />
               <ResizablePanel defaultSize={40} id="artifact-panel">
-                <div className="flex flex-col h-full bg-muted border-l">
+                <div className="flex flex-col h-full bg-sidebar border-l">
                   <div className="flex items-center justify-between p-4 border-b shrink-0">
                     <div className="flex items-center gap-2 min-w-0">
                       <h3 className="font-semibold truncate">{selectedArtifact.title}</h3>

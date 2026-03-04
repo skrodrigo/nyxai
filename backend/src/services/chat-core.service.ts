@@ -1,5 +1,5 @@
 import { streamSSE } from 'hono/streaming';
-import { convertToModelMessages, streamText, generateText, tool } from 'ai';
+import { convertToModelMessages, streamText, generateText, gateway, stepCountIs } from 'ai';
 import { HTTPException } from 'hono/http-exception';
 import type { Context } from 'hono';
 import { z } from 'zod';
@@ -93,7 +93,7 @@ async function generateChatTitle(userMessage: string): Promise<string> {
 
   try {
     const { text } = await generateText({
-      model: 'meta/llama-3.1-8b',
+      model: gateway('meta/llama-3.1-8b'),
       messages: [
         {
           role: 'system',
@@ -238,6 +238,7 @@ export async function handleChatSse(c: Context) {
 
   const history = toHistoryFromClient(rawMessages);
   const selectedModel = model || 'google/gemini-2.5-flash';
+  const resolvedModel = gateway(selectedModel as any);
   let assistantText = '';
 
   const profile = await prisma.user.findUnique(
@@ -269,11 +270,12 @@ export async function handleChatSse(c: Context) {
       const modelMessages = await convertToModelMessages(history);
 
       const result = streamText({
-        model: selectedModel,
+        model: resolvedModel,
         messages: modelMessages,
         system: getAssistantSystemPrompt({
           aiInstructions: (profile as any)?.aiInstructions ?? null,
         }),
+        stopWhen: stepCountIs(5),
         tools: {
           create_artifact: {
             description: 'Create an artifact (checklist, roadmap, report, code, document) when the user requests structured content. The artifact will be displayed in a side panel.',
@@ -361,6 +363,7 @@ export async function handleTemporaryChatSse(c: Context) {
 
   const history = toHistoryFromClient(rawMessages);
   const selectedModel = model || 'google/gemini-2.5-flash';
+  const resolvedModel = gateway(selectedModel as any);
   let assistantText = '';
 
   const profile = await prisma.user.findUnique(
@@ -379,7 +382,7 @@ export async function handleTemporaryChatSse(c: Context) {
     try {
       const modelMessages = await convertToModelMessages(history);
       const result = streamText({
-        model: selectedModel,
+        model: resolvedModel,
         messages: modelMessages,
         system: getAssistantSystemPrompt({
           aiInstructions: (profile as any)?.aiInstructions ?? null,
