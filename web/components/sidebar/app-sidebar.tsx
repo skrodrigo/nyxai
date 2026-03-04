@@ -66,7 +66,24 @@ export default function AppSidebar({ chats: initialChats, ...props }: AppSidebar
         <Sidebar variant="floating" {...props}>
           <SidebarHeader >
             <div className="flex items-center gap-2">
-              <Image src="/logos/pumkin.svg" alt="Logo" width={100} height={100} priority quality={100} className="m-2" />
+              <Image
+                src="/logos/pumkin-black.svg"
+                alt="Logo"
+                width={100}
+                height={100}
+                priority
+                quality={100}
+                className="m-2 dark:hidden"
+              />
+              <Image
+                src="/logos/pumkin-white.svg"
+                alt="Logo"
+                width={100}
+                height={100}
+                priority
+                quality={100}
+                className="m-2 hidden dark:block"
+              />
             </div>
             <div className="mt-2 flex w-full flex-col">
               <Link href={locale === 'pt' ? '/chat' : `/${locale}/chat`} className="flex-1">
