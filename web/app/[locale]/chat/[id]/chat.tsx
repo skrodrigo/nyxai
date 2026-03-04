@@ -793,7 +793,7 @@ export function Chat({
     <div className="flex h-screen w-full overflow-hidden p-2 md:p-0">
       {isMobile ? (
         <>
-          <div className="relative flex flex-col h-full w-full overflow-x-hidden px-2">
+          <div className="relative flex flex-col h-full w-full overflow-x-hidden ">
             <div className="absolute top-0 left-0 right-0 py-1 flex items-center gap-2 z-20 bg-background">
               <SidebarTrigger />
               <PromptInputModelSelect
