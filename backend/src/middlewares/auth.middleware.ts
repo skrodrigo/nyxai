@@ -2,7 +2,9 @@ import type { Context, Next } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import crypto from 'node:crypto';
 import { env } from './../common/env.js';
-import { prisma } from './../common/prisma.js';
+import { db } from '../common/db.js';
+import { users } from '../db/schema.js';
+import { eq } from 'drizzle-orm';
 
 function b64urlToBuffer(input: string) {
   const pad = input.length % 4;
@@ -48,20 +50,22 @@ export async function authMiddleware(c: Context, next: Next) {
     throw new HTTPException(401, { message: 'Invalid or expired token' });
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: payload.userId },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      image: true,
-      emailVerified: true,
-    },
-  });
-  if (!user) {
+  const userData = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      image: users.image,
+      emailVerified: users.emailVerified,
+    })
+    .from(users)
+    .where(eq(users.id, payload.userId))
+    .limit(1);
+
+  if (userData.length === 0) {
     throw new HTTPException(401, { message: 'Invalid user' });
   }
 
-  c.set('user', user);
+  c.set('user', userData[0]);
   await next();
 }

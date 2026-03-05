@@ -1,7 +1,9 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi';
 import type { AppVariables } from './routes.js';
 import { authMiddleware } from './../middlewares/auth.middleware.js';
-import { prisma } from './../common/prisma.js';
+import { eq, and } from 'drizzle-orm';
+import { db } from '../common/db.js';
+import { subscription } from '../db/schema.js';
 
 const subscriptionRouter = new OpenAPIHono<{ Variables: AppVariables }>();
 subscriptionRouter.use('*', authMiddleware);
@@ -26,25 +28,27 @@ const deleteIncompleteRoute = createRoute({
 
 subscriptionRouter.openapi(getRoute, async (c) => {
   const user = c.get('user');
-  const subscription = await prisma.subscription.findFirst({
-    where: { referenceId: user!.id },
-    select: {
-      id: true,
-      status: true,
-      plan: true,
-      periodStart: true,
-      periodEnd: true,
-      cancelAtPeriodEnd: true,
-    },
-  });
-  return c.json(subscription, 200);
+  const subscriptionData = await db
+    .select({
+      id: subscription.id,
+      status: subscription.status,
+      plan: subscription.plan,
+      periodStart: subscription.periodStart,
+      periodEnd: subscription.periodEnd,
+      cancelAtPeriodEnd: subscription.cancelAtPeriodEnd,
+    })
+    .from(subscription)
+    .where(eq(subscription.referenceId, user!.id))
+    .limit(1)
+    .then((rows) => rows[0] ?? null)
+  return c.json(subscriptionData, 200);
 });
 
 subscriptionRouter.openapi(deleteIncompleteRoute, async (c) => {
   const user = c.get('user');
-  await prisma.subscription.deleteMany({
-    where: { referenceId: user!.id, status: 'incomplete' },
-  });
+  await db
+    .delete(subscription)
+    .where(and(eq(subscription.referenceId, user!.id), eq(subscription.status, 'incomplete')));
   return c.json({ success: true }, 200);
 });
 

@@ -1,7 +1,9 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { AppVariables } from './routes.js'
 import { authMiddleware } from './../middlewares/auth.middleware.js'
-import { prisma } from './../common/prisma.js'
+import { eq, desc, isNull, and } from 'drizzle-orm'
+import { db } from '../common/db.js'
+import { chat, imageGeneration } from '../db/schema.js'
 import { chatBranchRepository } from './../repositories/chat-branch.repository.js'
 import { messageRepository } from './../repositories/message.repository.js'
 import { generateAndStoreImage } from './../services/image-generation.service.js'
@@ -58,14 +60,17 @@ imagesRouter.openapi(generateRoute, async (c) => {
 
 	let chatId = body.chatId
 	if (!chatId) {
-		const created = await prisma.chat.create({
-			data: {
+		const created = await db
+			.insert(chat)
+			.values({
 				userId: user!.id,
 				title: body.prompt.slice(0, 80),
 				model: body.model,
-			},
-			select: { id: true },
-		})
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			})
+			.returning({ id: chat.id })
+			.then((rows) => rows[0])
 		chatId = created.id
 	}
 
@@ -79,9 +84,12 @@ imagesRouter.openapi(generateRoute, async (c) => {
 	})
 
 	const ensured = await chatBranchRepository.ensureDefaultBranch(chatId)
-	const effectiveBranchId = (
-		await prisma.chat.findUnique({ where: { id: chatId }, select: { activeBranchId: true } })
-	)?.activeBranchId ?? ensured?.id ?? null
+	const chatData = await db
+		.select({ activeBranchId: chat.activeBranchId })
+		.from(chat)
+		.where(eq(chat.id, chatId))
+		.limit(1)
+	const effectiveBranchId = chatData[0]?.activeBranchId ?? ensured?.id ?? null
 	if (!effectiveBranchId) {
 		return c.json({ success: true, data: { chatId, ...data } }, 200)
 	}
@@ -131,13 +139,15 @@ imagesRouter.openapi(listRoute, async (c) => {
 	const user = c.get('user')
 	const { chatId } = c.req.valid('query')
 
-	const data = await prisma.imageGeneration.findMany({
-		where: {
-			userId: user!.id,
-			...(chatId ? { chatId } : {}),
-		},
-		orderBy: { createdAt: 'desc' },
-	})
+	const data = await db
+		.select()
+		.from(imageGeneration)
+		.where(
+			chatId
+				? and(eq(imageGeneration.userId, user!.id), eq(imageGeneration.chatId, chatId))
+				: eq(imageGeneration.userId, user!.id)
+		)
+		.orderBy(desc(imageGeneration.createdAt))
 
 	return c.json({ success: true, data }, 200)
 })

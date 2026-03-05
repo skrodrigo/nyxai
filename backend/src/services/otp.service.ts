@@ -1,6 +1,8 @@
-import crypto from 'node:crypto';
-import { prisma } from './../common/prisma.js';
-import { HTTPException } from 'hono/http-exception';
+import crypto from 'node:crypto'
+import { eq, and, isNull, desc } from 'drizzle-orm'
+import { db } from '../common/db.js'
+import { HTTPException } from 'hono/http-exception'
+import { emailOtp } from '../db/schema.js'
 
 const OTP_TTL_MS = 10 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
@@ -19,12 +21,11 @@ export const otpService = {
     const otpHash = hashOtp(email, code);
     const expiresAt = new Date(Date.now() + OTP_TTL_MS);
 
-    await prisma.emailOtp.create({
-      data: {
-        email,
-        otpHash,
-        expiresAt,
-      },
+    await db.insert(emailOtp).values({
+      email,
+      otpHash,
+      expiresAt,
+      createdAt: new Date(),
     });
 
     return { code, expiresAt };
@@ -33,64 +34,67 @@ export const otpService = {
   async verify(email: string, code: string) {
     const otpHash = hashOtp(email, code);
 
-    const record = await prisma.emailOtp.findFirst({
-      where: {
-        email,
-        otpHash,
-      },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        consumedAt: true,
-        expiresAt: true,
-        attempts: true,
-      },
-    });
+    const record = await db
+      .select({
+        id: emailOtp.id,
+        consumedAt: emailOtp.consumedAt,
+        expiresAt: emailOtp.expiresAt,
+        attempts: emailOtp.attempts,
+      })
+      .from(emailOtp)
+      .where(and(eq(emailOtp.email, email), eq(emailOtp.otpHash, otpHash)))
+      .orderBy(desc(emailOtp.createdAt))
+      .limit(1);
 
-    if (!record) {
+    if (record.length === 0) {
       throw new HTTPException(400, { message: 'Invalid code' });
     }
 
-    if (record.consumedAt) {
+    const row = record[0];
+
+    if (row.consumedAt) {
       throw new HTTPException(400, { message: 'Code already used' });
     }
 
-    if (record.expiresAt.getTime() < Date.now()) {
+    if (row.expiresAt.getTime() < Date.now()) {
       throw new HTTPException(400, { message: 'Code expired' });
     }
 
-    if (record.attempts >= OTP_MAX_ATTEMPTS) {
+    if (row.attempts >= OTP_MAX_ATTEMPTS) {
       throw new HTTPException(429, { message: 'Too many attempts' });
     }
 
-    await prisma.emailOtp.update({
-      where: { id: record.id },
-      data: { consumedAt: new Date() },
-    });
+    await db
+      .update(emailOtp)
+      .set({ consumedAt: new Date() })
+      .where(eq(emailOtp.id, row.id));
 
     return { ok: true as const };
   },
 
   async incrementAttempt(email: string, code: string) {
     const otpHash = hashOtp(email, code);
-    const record = await prisma.emailOtp.findFirst({
-      where: {
-        email,
-        otpHash,
-        consumedAt: null,
-      },
-      orderBy: { createdAt: 'desc' },
-      select: {
-        id: true,
-        attempts: true,
-      },
-    });
+    const record = await db
+      .select({
+        id: emailOtp.id,
+        attempts: emailOtp.attempts,
+      })
+      .from(emailOtp)
+      .where(
+        and(
+          eq(emailOtp.email, email),
+          eq(emailOtp.otpHash, otpHash),
+          isNull(emailOtp.consumedAt)
+        )
+      )
+      .orderBy(desc(emailOtp.createdAt))
+      .limit(1);
 
-    if (!record) return;
+    if (record.length === 0) return;
 
-    await prisma.emailOtp.update({
-      where: { id: record.id },
-      data: { attempts: { increment: 1 } },
-    });
+    await db
+      .update(emailOtp)
+      .set({ attempts: record[0].attempts + 1 })
+      .where(eq(emailOtp.id, record[0].id));
   },
 };

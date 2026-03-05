@@ -1,6 +1,6 @@
 import { OpenAPIHono } from '@hono/zod-openapi';
 import { swaggerUI } from '@hono/swagger-ui';
-import type { PrismaClient, User } from './../generated/prisma/client.js';
+import type { User } from './../db/schema.js';
 import { env } from './../common/env.js';
 
 import authRouter from './auth.routes.js';
@@ -21,7 +21,6 @@ import { rateLimit } from './../common/rate-limit.js';
 import { HTTPException } from 'hono/http-exception';
 
 export type AppVariables = {
-  prisma: PrismaClient;
   user: Omit<User, 'password'> | null;
 };
 

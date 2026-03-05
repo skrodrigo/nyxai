@@ -1,6 +1,6 @@
 import app from './../src/routes/routes.js';
-import { withPrisma } from './../src/common/prisma.js';
+import { withDb } from '../src/common/db.js';
 
-app.use('*', withPrisma);
+app.use('*', withDb);
 
 export default app;

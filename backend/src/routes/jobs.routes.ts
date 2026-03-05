@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
 import { env } from './../common/env.js';
-import { prisma } from './../common/prisma.js';
+import { db } from '../common/db.js'
+import { eq, and, inArray, gte, lte } from 'drizzle-orm'
+import { users, subscription, emailCampaignLog } from '../db/schema.js'
 import { emailService } from './../services/email.service.js';
 
 const jobsRouter = new Hono();
@@ -18,18 +20,21 @@ jobsRouter.post('/email-drip', async (c) => {
   const minCreatedAt = new Date(now.getTime() - 8 * dayMs);
   const maxCreatedAt = new Date(now.getTime() - 2 * dayMs);
 
-  const candidates = await prisma.user.findMany({
-    where: {
-      emailVerified: true,
-      createdAt: { gte: minCreatedAt, lte: maxCreatedAt },
-    },
-    select: {
-      id: true,
-      name: true,
-      email: true,
-      createdAt: true,
-    },
-  });
+  const candidates = await db
+    .select({
+      id: users.id,
+      name: users.name,
+      email: users.email,
+      createdAt: users.createdAt,
+    })
+    .from(users)
+    .where(
+      and(
+        eq(users.emailVerified, true),
+        gte(users.createdAt, minCreatedAt),
+        lte(users.createdAt, maxCreatedAt)
+      )
+    );
 
   const byDay = new Map<2 | 5 | 7, typeof candidates>();
   for (const u of candidates) {
@@ -41,30 +46,28 @@ jobsRouter.post('/email-drip', async (c) => {
     byDay.set(day, list);
   }
 
-  const allCandidateIds = candidates.map((u) => u.id);
-  const activeSubs = await prisma.subscription.findMany({
-    where: { referenceId: { in: allCandidateIds }, status: 'active' },
-    select: { referenceId: true },
-  });
-  const activeIds = new Set(activeSubs.map((s) => s.referenceId));
+  const allCandidateIds = candidates.map((u) => u.id)
+  const activeSubs = await db
+    .select({ referenceId: subscription.referenceId })
+    .from(subscription)
+    .where(and(inArray(subscription.referenceId, allCandidateIds), eq(subscription.status, 'active')))
+  const activeIds = new Set(activeSubs.map((s) => s.referenceId))
 
   for (const [day, users] of byDay.entries()) {
     const campaignKey = `drip_day_${day}`;
     const userIds = users.map((u) => u.id).filter((id) => !activeIds.has(id));
     if (userIds.length === 0) continue;
 
-    const sentLogs = await prisma.emailCampaignLog.findMany({
-      where: { userId: { in: userIds }, campaignKey },
-      select: { userId: true },
-    });
-    const sentIds = new Set(sentLogs.map((l) => l.userId));
+    const sentLogs = await db
+      .select({ userId: emailCampaignLog.userId })
+      .from(emailCampaignLog)
+      .where(and(inArray(emailCampaignLog.userId, userIds), eq(emailCampaignLog.campaignKey, campaignKey)))
+    const sentIds = new Set(sentLogs.map((l) => l.userId))
 
     for (const u of users) {
       if (activeIds.has(u.id) || sentIds.has(u.id)) continue;
-      await emailService.sendDrip({ to: u.email, name: u.name, day });
-      await prisma.emailCampaignLog.create({
-        data: { userId: u.id, campaignKey },
-      });
+      await emailService.sendDrip({ to: u.email, name: u.name, day })
+      await db.insert(emailCampaignLog).values({ userId: u.id, campaignKey })
     }
   }
 

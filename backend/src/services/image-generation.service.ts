@@ -1,5 +1,7 @@
 import { generateImage, gateway, NoImageGeneratedError } from 'ai'
-import { prisma } from './../common/prisma.js'
+import { eq } from 'drizzle-orm'
+import { db } from '../common/db.js'
+import { imageGeneration } from '../db/schema.js'
 import { uploadGeneratedImage } from './r2-storage.service.js'
 
 function toGatewayImageModelId(model: string) {
@@ -20,8 +22,9 @@ export async function generateAndStoreImage(params: {
 	model: string
 	returnBase64Preview?: boolean
 }) {
-	const created = await prisma.imageGeneration.create({
-		data: {
+	const created = await db
+		.insert(imageGeneration)
+		.values({
 			chatId: params.chatId,
 			messageId: params.messageId ?? null,
 			userId: params.userId,
@@ -30,9 +33,11 @@ export async function generateAndStoreImage(params: {
 			imageUrl: '',
 			r2Key: '',
 			status: 'processing',
-		},
-		select: { id: true },
-	})
+			createdAt: new Date(),
+			updatedAt: new Date(),
+		})
+		.returning({ id: imageGeneration.id })
+		.then((rows) => rows[0])
 
 	try {
 		const gatewayModelId = toGatewayImageModelId(params.model)
@@ -53,14 +58,15 @@ export async function generateAndStoreImage(params: {
 			mediaType,
 		})
 
-		await prisma.imageGeneration.update({
-			where: { id: created.id },
-			data: {
+		await db
+			.update(imageGeneration)
+			.set({
 				imageUrl: uploaded.imageUrl,
 				r2Key: uploaded.key,
 				status: 'completed',
-			},
-		})
+				updatedAt: new Date(),
+			})
+			.where(eq(imageGeneration.id, created.id))
 
 		return {
 			id: created.id,
@@ -80,13 +86,14 @@ export async function generateAndStoreImage(params: {
 					? err.message
 					: 'Failed to generate image'
 
-		await prisma.imageGeneration.update({
-			where: { id: created.id },
-			data: {
+		await db
+			.update(imageGeneration)
+			.set({
 				status: 'failed',
 				error: details,
-			},
-		})
+				updatedAt: new Date(),
+			})
+			.where(eq(imageGeneration.id, created.id))
 
 		throw err
 	}

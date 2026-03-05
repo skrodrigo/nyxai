@@ -10,7 +10,7 @@ Pumkin is a complete SaaS application built as a monorepo. The **web app** is bu
 
 This repo contains 3 apps:
 
-- **backend/**: Hono API + Prisma
+- **backend/**: Hono API + Drizzle ORM
 - **web/**: Next.js app + BFF (`web/app/api/*`)
 - **native/**: Expo app 
 
@@ -34,9 +34,9 @@ This repo contains 3 apps:
 - **Frontend**: Next.js 16 with App Router, React 19, TypeScript
 - **Styling**: Tailwind CSS 4 with Radix UI components
 - **BFF Layer**: Next.js Route Handlers (`web/app/api/*`) proxying to the API
-- **Backend**: Hono.js + Prisma (PostgreSQL)
-- **Authentication**: Google OAuth (openid-client) + JWT
-- **Database**: PostgreSQL with Prisma ORM
+- **Backend**: Hono.js + Drizzle ORM (PostgreSQL)
+- **Database**: PostgreSQL with Drizzle ORM
+- **Auth**: Google OAuth (openid-client) + JWT
 - **Payments**: Stripe for subscriptions and billing
 - **AI**: AISDK + OpenRouter for unified model access
 - **Deploy**: Optimized for Vercel (web) + any Bun host (API)
@@ -45,13 +45,13 @@ This repo contains 3 apps:
 
 ```
 pumkin/
-├── backend/                      # Hono.js API (Prisma)
+├── backend/                      # Hono.js API (Drizzle ORM)
 │   ├── api/                      # Entry point
-│   ├── prisma/                   # Schema and migrations
-│   └── src/
-│       ├── routes/               # Hono routes (auth, chat, subscription, ...)
-│       ├── services/             # Domain services (auth, chat, usage, ...)
-│       └── repositories/         # Prisma repositories
+│   ├── src/
+│   │   ├── db/                   # Drizzle schema
+│   │   ├── routes/               # Hono routes
+│   │   ├── services/             # Domain services
+│   │   └── repositories/         # Drizzle repositories
 ├── web/                          # Next.js 16 app
 │   ├── app/                      # App Router
 │   │   └── api/                  # BFF Route Handlers (proxy to backend)
@@ -155,8 +155,7 @@ Run migrations from `backend/`:
 
 ```bash
 cd backend
-bun run db:generate
-bun run db:migrate:prod
+bun run db:migrate
 ```
 
 ### Running locally

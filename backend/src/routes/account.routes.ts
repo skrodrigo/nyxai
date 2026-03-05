@@ -1,8 +1,10 @@
 import { OpenAPIHono, createRoute, z } from '@hono/zod-openapi'
 import type { AppVariables } from './routes.js'
 import { authMiddleware } from './../middlewares/auth.middleware.js'
-import { prisma } from './../common/prisma.js'
+import { db } from '../common/db.js'
 import { stripe } from './../common/stripe.js'
+import { eq, and, inArray, isNotNull, or } from 'drizzle-orm'
+import { users, subscription } from '../db/schema.js'
 
 const accountRouter = new OpenAPIHono<{ Variables: AppVariables }>()
 accountRouter.use('*', authMiddleware)
@@ -146,20 +148,20 @@ accountRouter.openapi(getProfileRoute, async (c) => {
 	const authUser = c.get('user')
 	const userId = authUser!.id
 
-	const user = await prisma.user.findUnique(
-		({
-			where: { id: userId },
-			select: {
-				name: true,
-				occupation: true,
-				aiInstructions: true,
-				bio: true,
-			},
-		} as unknown) as Parameters<typeof prisma.user.findUnique>[0],
-	)
-	if (!user) return c.json({ success: false, error: 'Not found', statusCode: 404 }, 404)
+	const userData = await db
+		.select({
+			name: users.name,
+			occupation: users.occupation,
+			aiInstructions: users.aiInstructions,
+			bio: users.bio,
+		})
+		.from(users)
+		.where(eq(users.id, userId))
+		.limit(1)
 
-	return c.json({ success: true, data: user }, 200)
+	if (userData.length === 0) return c.json({ success: false, error: 'Not found', statusCode: 404 }, 404)
+
+	return c.json({ success: true, data: userData[0] }, 200)
 })
 
 accountRouter.openapi(patchProfileRoute, async (c) => {
@@ -167,35 +169,26 @@ accountRouter.openapi(patchProfileRoute, async (c) => {
 	const userId = authUser!.id
 	const payload = c.req.valid('json')
 
-	const updated = await prisma.user.update(
-		({
-			where: { id: userId },
-			data: {
-				...(typeof payload.name === 'string' ? { name: payload.name.trim() } : {}),
-				...(typeof payload.occupation === 'string'
-					? { occupation: payload.occupation.trim() }
-					: payload.occupation === null
-						? { occupation: null }
-						: {}),
-				...(typeof payload.aiInstructions === 'string'
-					? { aiInstructions: payload.aiInstructions.trim() }
-					: payload.aiInstructions === null
-						? { aiInstructions: null }
-						: {}),
-				...(typeof payload.bio === 'string'
-					? { bio: payload.bio.trim() }
-					: payload.bio === null
-						? { bio: null }
-						: {}),
-			},
-			select: {
-				name: true,
-				occupation: true,
-				aiInstructions: true,
-				bio: true,
-			},
-		} as unknown) as Parameters<typeof prisma.user.update>[0],
-	)
+	const updateData: Record<string, unknown> = {}
+	if (typeof payload.name === 'string') updateData.name = payload.name.trim()
+	if (typeof payload.occupation === 'string') updateData.occupation = payload.occupation.trim()
+	if (payload.occupation === null) updateData.occupation = null
+	if (typeof payload.aiInstructions === 'string') updateData.aiInstructions = payload.aiInstructions.trim()
+	if (payload.aiInstructions === null) updateData.aiInstructions = null
+	if (typeof payload.bio === 'string') updateData.bio = payload.bio.trim()
+	if (payload.bio === null) updateData.bio = null
+
+	const updated = await db
+		.update(users)
+		.set(updateData)
+		.where(eq(users.id, userId))
+		.returning({
+			name: users.name,
+			occupation: users.occupation,
+			aiInstructions: users.aiInstructions,
+			bio: users.bio,
+		})
+		.then((rows) => rows[0])
 
 	return c.json({ success: true, data: updated }, 200)
 })
@@ -204,23 +197,27 @@ accountRouter.openapi(deleteRoute, async (c) => {
 	const authUser = c.get('user')
 	const userId = authUser!.id
 
-	const user = await prisma.user.findUnique({
-		where: { id: userId },
-		select: { id: true, stripeCustomerId: true },
-	})
+	const userData = await db
+		.select({ id: users.id, stripeCustomerId: users.stripeCustomerId })
+		.from(users)
+		.where(eq(users.id, userId))
+		.limit(1)
 
-	const stripeCustomerId = user?.stripeCustomerId ?? null
+	const stripeCustomerId = userData[0]?.stripeCustomerId ?? null
 
-	const subscription = await prisma.subscription.findFirst({
-		where: {
-			referenceId: userId,
-			stripeSubscriptionId: { not: null },
-			status: { in: ['active', 'trialing', 'past_due', 'incomplete'] },
-		},
-		select: { stripeSubscriptionId: true },
-	})
+	const subscriptionData = await db
+		.select({ stripeSubscriptionId: subscription.stripeSubscriptionId })
+		.from(subscription)
+		.where(
+			and(
+				eq(subscription.referenceId, userId),
+				isNotNull(subscription.stripeSubscriptionId),
+				inArray(subscription.status, ['active', 'trialing', 'past_due', 'incomplete'])
+			)
+		)
+		.limit(1)
 
-	const stripeSubscriptionId = subscription?.stripeSubscriptionId ?? null
+	const stripeSubscriptionId = subscriptionData[0]?.stripeSubscriptionId ?? null
 	if (stripeSubscriptionId) {
 		try {
 			await stripe.subscriptions.cancel(stripeSubscriptionId)
@@ -235,16 +232,16 @@ accountRouter.openapi(deleteRoute, async (c) => {
 		}
 	}
 
-	await prisma.subscription.deleteMany({
-		where: {
-			OR: [
-				{ referenceId: userId },
-				...(stripeCustomerId ? [{ stripeCustomerId }] : []),
-			],
-		},
-	})
+	await db
+		.delete(subscription)
+		.where(
+			or(
+				eq(subscription.referenceId, userId),
+				stripeCustomerId ? eq(subscription.stripeCustomerId, stripeCustomerId) : undefined
+			)
+		)
 
-	await prisma.user.delete({ where: { id: userId } })
+	await db.delete(users).where(eq(users.id, userId))
 
 	return c.json({ success: true }, 200)
 })
@@ -253,14 +250,15 @@ accountRouter.openapi(getLocaleRoute, async (c) => {
 	const authUser = c.get('user')
 	const userId = authUser!.id
 
-	const user = await prisma.user.findUnique({
-		where: { id: userId },
-		select: { locale: true },
-	})
+	const userData = await db
+		.select({ locale: users.locale })
+		.from(users)
+		.where(eq(users.id, userId))
+		.limit(1)
 
-	if (!user) return c.json({ success: false, error: 'Not found', statusCode: 404 }, 404)
+	if (userData.length === 0) return c.json({ success: false, error: 'Not found', statusCode: 404 }, 404)
 
-	return c.json({ success: true, data: { locale: user.locale as 'en' | 'fr' | 'es' | 'pt' } }, 200)
+	return c.json({ success: true, data: { locale: userData[0].locale as 'en' | 'fr' | 'es' | 'pt' } }, 200)
 })
 
 accountRouter.openapi(patchLocaleRoute, async (c) => {
@@ -268,11 +266,12 @@ accountRouter.openapi(patchLocaleRoute, async (c) => {
 	const userId = authUser!.id
 	const payload = c.req.valid('json')
 
-	const updated = await prisma.user.update({
-		where: { id: userId },
-		data: { locale: payload.locale },
-		select: { locale: true },
-	})
+	const updated = await db
+		.update(users)
+		.set({ locale: payload.locale })
+		.where(eq(users.id, userId))
+		.returning({ locale: users.locale })
+		.then((rows) => rows[0])
 
 	return c.json({ success: true, data: { locale: updated.locale as 'en' | 'fr' | 'es' | 'pt' } }, 200)
 })

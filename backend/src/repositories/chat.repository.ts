@@ -1,165 +1,196 @@
-import { prisma } from './../common/prisma.js';
-import { chatBranchRepository } from './chat-branch.repository.js';
+import { eq, and, isNull, isNotNull, desc, asc, sql } from 'drizzle-orm'
+import { db } from '../common/db.js'
+import { chat, message } from '../db/schema.js'
+import { chatBranchRepository } from './chat-branch.repository.js'
 
 export const chatRepository = {
-  create(userId: string, title: string, model?: string) {
-    return prisma.chat.create({
-      data: { userId, title, model },
-    });
-  },
+	create(userId: string, title: string, model?: string) {
+		return db
+			.insert(chat)
+			.values({
+				userId,
+				title,
+				model,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			})
+			.returning()
+			.then((rows) => rows[0])
+	},
 
-  async findByIdForUser(chatId: string, userId: string, branchId?: string) {
-    const chat = await prisma.chat.findFirst({
-      where: { id: chatId, userId },
-      select: {
-        id: true,
-        title: true,
-        pinnedAt: true,
-        sharePath: true,
-        isPublic: true,
-        updatedAt: true,
-        model: true,
-        activeBranchId: true,
-      },
-    });
+	async findByIdForUser(chatId: string, userId: string, branchId?: string) {
+		const chatData = await db
+			.select({
+				id: chat.id,
+				title: chat.title,
+				pinnedAt: chat.pinnedAt,
+				sharePath: chat.sharePath,
+				isPublic: chat.isPublic,
+				updatedAt: chat.updatedAt,
+				model: chat.model,
+				activeBranchId: chat.activeBranchId,
+			})
+			.from(chat)
+			.where(and(eq(chat.id, chatId), eq(chat.userId, userId)))
+			.limit(1)
 
-    if (!chat) return null;
+		if (chatData.length === 0) return null
+		const chatRow = chatData[0]
 
-    const ensured = await chatBranchRepository.ensureDefaultBranch(chatId);
-    const effectiveBranchId = branchId ?? chat.activeBranchId ?? ensured?.id ?? null;
-    if (!effectiveBranchId) {
-      return { ...chat, activeBranchId: null, messages: [] };
-    }
+		const ensured = await chatBranchRepository.ensureDefaultBranch(chatId)
+		const effectiveBranchId = branchId ?? chatRow.activeBranchId ?? ensured?.id ?? null
+		if (!effectiveBranchId) {
+			return { ...chatRow, activeBranchId: null, messages: [] }
+		}
 
-    const messages = await chatBranchRepository.getResolvedMessagesForBranch(effectiveBranchId);
-    return { ...chat, activeBranchId: effectiveBranchId, messages };
-  },
+		const messages = await chatBranchRepository.getResolvedMessagesForBranch(effectiveBranchId)
+		return { ...chatRow, activeBranchId: effectiveBranchId, messages }
+	},
 
-  findMetaForUser(chatId: string, userId: string) {
-    return prisma.chat.findFirst({
-      where: { id: chatId, userId },
-      select: { id: true },
-    });
-  },
+	findMetaForUser(chatId: string, userId: string) {
+		return db
+			.select({ id: chat.id })
+			.from(chat)
+			.where(and(eq(chat.id, chatId), eq(chat.userId, userId)))
+			.limit(1)
+			.then((rows) => rows[0] ?? null)
+	},
 
-  findManyForUser(userId: string) {
-    return prisma.chat.findMany({
-      where: { userId, archivedAt: null },
-      select: {
-        id: true,
-        title: true,
-        pinnedAt: true,
-        updatedAt: true,
-      },
-      orderBy: [
-        { pinnedAt: { sort: 'desc', nulls: 'last' } },
-        { updatedAt: 'desc' },
-      ],
-    });
-  },
+	findManyForUser(userId: string) {
+		return db
+			.select({
+				id: chat.id,
+				title: chat.title,
+				pinnedAt: chat.pinnedAt,
+				updatedAt: chat.updatedAt,
+			})
+			.from(chat)
+			.where(and(eq(chat.userId, userId), isNull(chat.archivedAt)))
+			.orderBy(desc(sql`case when ${chat.pinnedAt} is null then 1 else 0 end`), desc(chat.pinnedAt), desc(chat.updatedAt))
+	},
 
-  findArchivedForUser(userId: string) {
-    return prisma.chat.findMany({
-      where: { userId, archivedAt: { not: null } },
-      select: {
-        id: true,
-        title: true,
-        pinnedAt: true,
-        updatedAt: true,
-        archivedAt: true,
-      },
-      orderBy: [
-        { pinnedAt: { sort: 'desc', nulls: 'last' } },
-        { updatedAt: 'desc' },
-      ],
-    });
-  },
+	findArchivedForUser(userId: string) {
+		return db
+			.select({
+				id: chat.id,
+				title: chat.title,
+				pinnedAt: chat.pinnedAt,
+				updatedAt: chat.updatedAt,
+				archivedAt: chat.archivedAt,
+			})
+			.from(chat)
+			.where(and(eq(chat.userId, userId), isNotNull(chat.archivedAt)))
+			.orderBy(desc(sql`case when ${chat.pinnedAt} is null then 1 else 0 end`), desc(chat.pinnedAt), desc(chat.updatedAt))
+	},
 
-  pinForUser(chatId: string, userId: string) {
-    return prisma.chat.updateMany({
-      where: { id: chatId, userId },
-      data: { pinnedAt: new Date() },
-    });
-  },
+	pinForUser(chatId: string, userId: string) {
+		return db
+			.update(chat)
+			.set({ pinnedAt: new Date() })
+			.where(and(eq(chat.id, chatId), eq(chat.userId, userId)))
+			.returning()
+			.then((rows) => ({ count: rows.length }))
+	},
 
-  unpinForUser(chatId: string, userId: string) {
-    return prisma.chat.updateMany({
-      where: { id: chatId, userId },
-      data: { pinnedAt: null },
-    });
-  },
+	unpinForUser(chatId: string, userId: string) {
+		return db
+			.update(chat)
+			.set({ pinnedAt: null })
+			.where(and(eq(chat.id, chatId), eq(chat.userId, userId)))
+			.returning()
+			.then((rows) => ({ count: rows.length }))
+	},
 
-  renameForUser(chatId: string, userId: string, title: string) {
-    return prisma.chat.updateMany({
-      where: { id: chatId, userId },
-      data: { title },
-    });
-  },
+	renameForUser(chatId: string, userId: string, title: string) {
+		return db
+			.update(chat)
+			.set({ title })
+			.where(and(eq(chat.id, chatId), eq(chat.userId, userId)))
+			.returning()
+			.then((rows) => ({ count: rows.length }))
+	},
 
-  archiveForUser(chatId: string, userId: string) {
-    return prisma.chat.updateMany({
-      where: { id: chatId, userId, archivedAt: null },
-      data: { archivedAt: new Date() },
-    });
-  },
+	archiveForUser(chatId: string, userId: string) {
+		return db
+			.update(chat)
+			.set({ archivedAt: new Date() })
+			.where(and(eq(chat.id, chatId), eq(chat.userId, userId), isNull(chat.archivedAt)))
+			.returning()
+			.then((rows) => ({ count: rows.length }))
+	},
 
-  unarchiveForUser(chatId: string, userId: string) {
-    return prisma.chat.updateMany({
-      where: { id: chatId, userId, archivedAt: { not: null } },
-      data: { archivedAt: null },
-    });
-  },
+	unarchiveForUser(chatId: string, userId: string) {
+		return db
+			.update(chat)
+			.set({ archivedAt: null })
+			.where(and(eq(chat.id, chatId), eq(chat.userId, userId), isNotNull(chat.archivedAt)))
+			.returning()
+			.then((rows) => ({ count: rows.length }))
+	},
 
-  deleteForUser(chatId: string, userId: string) {
-    return prisma.chat.deleteMany({
-      where: { id: chatId, userId },
-    });
-  },
+	deleteForUser(chatId: string, userId: string) {
+		return db
+			.delete(chat)
+			.where(and(eq(chat.id, chatId), eq(chat.userId, userId)))
+			.returning()
+			.then((rows) => ({ count: rows.length }))
+	},
 
-  markPublic(chatId: string, userId: string, sharePath: string) {
-    return prisma.chat.update({
-      where: { id: chatId },
-      data: { isPublic: true, sharePath },
-    });
-  },
+	markPublic(chatId: string, userId: string, sharePath: string) {
+		return db
+			.update(chat)
+			.set({ isPublic: true, sharePath })
+			.where(eq(chat.id, chatId))
+			.returning()
+			.then((rows) => rows[0])
+	},
 
-  findShareInfoForUser(chatId: string, userId: string) {
-    return prisma.chat.findFirst({
-      where: { id: chatId, userId },
-      select: {
-        id: true,
-        sharePath: true,
-      },
-    });
-  },
+	findShareInfoForUser(chatId: string, userId: string) {
+		return db
+			.select({ id: chat.id, sharePath: chat.sharePath })
+			.from(chat)
+			.where(and(eq(chat.id, chatId), eq(chat.userId, userId)))
+			.limit(1)
+			.then((rows) => rows[0] ?? null)
+	},
 
-  findPublicBySharePath(sharePath: string) {
-    return prisma.chat.findUnique({
-      where: { sharePath, isPublic: true },
-      select: {
-        id: true,
-        title: true,
-        sharePath: true,
-        isPublic: true,
-        updatedAt: true,
-        model: true,
-        messages: {
-          orderBy: { createdAt: 'asc' },
-          select: {
-            id: true,
-            role: true,
-            content: true,
-            createdAt: true,
-          },
-        },
-      },
-    });
-  },
+	async findPublicBySharePath(sharePath: string) {
+		const chatData = await db
+			.select({
+				id: chat.id,
+				title: chat.title,
+				sharePath: chat.sharePath,
+				isPublic: chat.isPublic,
+				updatedAt: chat.updatedAt,
+				model: chat.model,
+			})
+			.from(chat)
+			.where(and(eq(chat.sharePath, sharePath), eq(chat.isPublic, true)))
+			.limit(1)
 
-  updateModel(chatId: string, model: string) {
-    return prisma.chat.update({
-      where: { id: chatId },
-      data: { model },
-    });
-  },
-};
+		if (chatData.length === 0) return null
+		const chatRow = chatData[0]
+
+		const messages = await db
+			.select({
+				id: message.id,
+				role: message.role,
+				content: message.content,
+				createdAt: message.createdAt,
+			})
+			.from(message)
+			.where(eq(message.chatId, chatRow.id))
+			.orderBy(asc(message.createdAt))
+
+		return { ...chatRow, messages }
+	},
+
+	updateModel(chatId: string, modelValue: string) {
+		return db
+			.update(chat)
+			.set({ model: modelValue })
+			.where(eq(chat.id, chatId))
+			.returning()
+			.then((rows) => rows[0])
+	},
+}

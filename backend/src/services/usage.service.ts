@@ -1,5 +1,7 @@
-import { prisma } from './../common/prisma.js';
-import { startOfDay, startOfWeek, startOfMonth } from 'date-fns';
+import { eq, and } from 'drizzle-orm'
+import { db } from '../common/db.js'
+import { startOfDay, startOfWeek, startOfMonth } from 'date-fns'
+import { subscription, userUsage } from '../db/schema.js'
 
 export const DEFAULT_LIMITS = {
   promptsDay: 50,
@@ -10,27 +12,29 @@ export const DEFAULT_LIMITS = {
 export async function getUserUsage(userId: string) {
   const limits = DEFAULT_LIMITS;
 
-  const [subscription, usage] = await Promise.all([
-    prisma.subscription.findFirst({
-      where: { referenceId: userId, status: 'active' },
-      select: { id: true },
-    }),
-    prisma.userUsage.findUnique({
-      where: { userId },
-      select: {
-        dayCount: true,
-        weekCount: true,
-        monthCount: true,
-        dayWindowStart: true,
-        weekWindowStart: true,
-        monthWindowStart: true,
-      },
-    }),
+  const [subData, usageData] = await Promise.all([
+    db
+      .select({ id: subscription.id })
+      .from(subscription)
+      .where(and(eq(subscription.referenceId, userId), eq(subscription.status, 'active')))
+      .limit(1),
+    db
+      .select({
+        dayCount: userUsage.dayCount,
+        weekCount: userUsage.weekCount,
+        monthCount: userUsage.monthCount,
+        dayWindowStart: userUsage.dayWindowStart,
+        weekWindowStart: userUsage.weekWindowStart,
+        monthWindowStart: userUsage.monthWindowStart,
+      })
+      .from(userUsage)
+      .where(eq(userUsage.userId, userId))
+      .limit(1),
   ]);
 
-  const dayCount = usage?.dayCount ?? 0;
-  const weekCount = usage?.weekCount ?? 0;
-  const monthCount = usage?.monthCount ?? 0;
+  const dayCount = usageData[0]?.dayCount ?? 0;
+  const weekCount = usageData[0]?.weekCount ?? 0;
+  const monthCount = usageData[0]?.monthCount ?? 0;
 
   const limitReached =
     dayCount >= limits.promptsDay ||
@@ -43,7 +47,7 @@ export async function getUserUsage(userId: string) {
     monthCount,
     limits,
     limitReached,
-    isSubscribed: !!subscription,
+    isSubscribed: subData.length > 0,
   };
 }
 
@@ -53,42 +57,50 @@ export async function incrementUserUsage(userId: string) {
   const startOfWeekDate = startOfWeek(now);
   const startOfMonthDate = startOfMonth(now);
 
-  const userUsage = await prisma.userUsage.findUnique({
-    where: { userId },
-    select: {
-      dayCount: true,
-      weekCount: true,
-      monthCount: true,
-      dayWindowStart: true,
-      weekWindowStart: true,
-      monthWindowStart: true,
-    },
-  });
+  const usageData = await db
+    .select({
+      dayCount: userUsage.dayCount,
+      weekCount: userUsage.weekCount,
+      monthCount: userUsage.monthCount,
+      dayWindowStart: userUsage.dayWindowStart,
+      weekWindowStart: userUsage.weekWindowStart,
+      monthWindowStart: userUsage.monthWindowStart,
+    })
+    .from(userUsage)
+    .where(eq(userUsage.userId, userId))
+    .limit(1);
 
-  const createData = {
+  const existing = usageData[0];
+
+  const dayCount = existing && existing.dayWindowStart >= startOfToday ? existing.dayCount + 1 : 1;
+  const weekCount = existing && existing.weekWindowStart >= startOfWeekDate ? existing.weekCount + 1 : 1;
+  const monthCount = existing && existing.monthWindowStart >= startOfMonthDate ? existing.monthCount + 1 : 1;
+
+  const upsertData = {
     userId,
-    dayCount: 1,
-    weekCount: 1,
-    monthCount: 1,
+    dayCount,
+    weekCount,
+    monthCount,
     dayWindowStart: startOfToday,
     weekWindowStart: startOfWeekDate,
     monthWindowStart: startOfMonthDate,
   };
 
-  const updateData = {
-    dayCount: userUsage && userUsage.dayWindowStart < startOfToday ? 1 : { increment: 1 },
-    dayWindowStart: startOfToday,
-    weekCount: userUsage && userUsage.weekWindowStart < startOfWeekDate ? 1 : { increment: 1 },
-    weekWindowStart: startOfWeekDate,
-    monthCount: userUsage && userUsage.monthWindowStart < startOfMonthDate ? 1 : { increment: 1 },
-    monthWindowStart: startOfMonthDate,
-  };
-
-  await prisma.userUsage.upsert({
-    where: { userId },
-    update: updateData,
-    create: createData,
-  });
+  try {
+    await db.insert(userUsage).values(upsertData);
+  } catch {
+    await db
+      .update(userUsage)
+      .set({
+        dayCount: upsertData.dayCount,
+        weekCount: upsertData.weekCount,
+        monthCount: upsertData.monthCount,
+        dayWindowStart: upsertData.dayWindowStart,
+        weekWindowStart: upsertData.weekWindowStart,
+        monthWindowStart: upsertData.monthWindowStart,
+      })
+      .where(eq(userUsage.userId, userId));
+  }
 
   return { success: true };
 }

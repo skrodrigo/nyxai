@@ -3,13 +3,15 @@ import { convertToModelMessages, streamText, generateText, gateway, stepCountIs 
 import { HTTPException } from 'hono/http-exception';
 import type { Context } from 'hono';
 import { z } from 'zod';
+import { eq, and } from 'drizzle-orm';
 
 import { chatRepository } from './../repositories/chat.repository.js';
 import { chatBranchRepository } from './../repositories/chat-branch.repository.js';
-import { messageRepository } from './../repositories/message.repository.js';
 import { getUserUsage, incrementUserUsage } from './usage.service.js';
-import { prisma } from './../common/prisma.js';
+import { db } from '../common/db.js';
+import { chat, message, users } from '../db/schema.js';
 import crypto from 'node:crypto';
+import { messageRepository } from './../repositories/message.repository.js';
 
 function getAssistantSystemPrompt(params?: { aiInstructions?: string | null }) {
   const base = [
@@ -209,33 +211,40 @@ export async function handleChatSse(c: Context) {
   }
 
   const ensured = await chatBranchRepository.ensureDefaultBranch(chatId);
-  const effectiveBranchId = branchId ?? (await prisma.chat.findUnique({ where: { id: chatId }, select: { activeBranchId: true } }))?.activeBranchId ?? ensured?.id ?? null;
+  const chatData = await db.select({ activeBranchId: chat.activeBranchId }).from(chat).where(eq(chat.id, chatId)).limit(1);
+  const effectiveBranchId = branchId ?? chatData[0]?.activeBranchId ?? ensured?.id ?? null;
   if (!effectiveBranchId) {
     throw new HTTPException(500, { message: 'Failed to resolve chat branch' });
   }
   branchId = effectiveBranchId;
 
   if (isEdit && lastMessageId) {
-    const forkMessage = await prisma.message.findFirst({
-      where: { id: lastMessageId, chatId },
-      select: { id: true, content: true },
-    });
-    if (!forkMessage) {
+    const forkMessageData = await db
+      .select({ id: message.id, content: message.content })
+      .from(message)
+      .where(and(eq(message.id, lastMessageId), eq(message.chatId, chatId)))
+      .limit(1);
+    if (forkMessageData.length === 0) {
       throw new HTTPException(404, { message: 'Message not found' });
     }
 
-    const newVersion = await messageRepository.createVersion(lastMessageId, { type: 'text', text: userText });
+    const messageId = lastMessageId;
+    const newVersion = await messageRepository.createVersion(messageId, { type: 'text', text: userText });
+    if (!newVersion || !newVersion.id) {
+      throw new HTTPException(500, { message: 'Failed to create message version' });
+    }
     await chatBranchRepository.forkBranchFromEdit({
-      chatId,
-      parentBranchId: branchId,
-      forkMessageId: lastMessageId,
+      chatId: chatId!,
+      parentBranchId: branchId!,
+      forkMessageId: messageId,
       forkVersionId: newVersion.id,
     });
 
-    branchId = (await prisma.chat.findUnique({ where: { id: chatId }, select: { activeBranchId: true } }))?.activeBranchId ?? branchId;
+    const chatData2 = await db.select({ activeBranchId: chat.activeBranchId }).from(chat).where(eq(chat.id, chatId)).limit(1);
+    branchId = chatData2[0]?.activeBranchId ?? branchId;
   } else {
-    const createdUserMessage = await messageRepository.create(chatId, 'user', { type: 'text', text: userText });
-    await chatBranchRepository.appendMessageToBranch(branchId, createdUserMessage.id);
+    const createdUserMessage = await messageRepository.create(chatId!, 'user', { type: 'text', text: userText });
+    await chatBranchRepository.appendMessageToBranch(branchId!, createdUserMessage.id);
   }
   await incrementUserUsage(user.id);
 
@@ -244,12 +253,12 @@ export async function handleChatSse(c: Context) {
   const resolvedModel = gateway(selectedModel as any);
   let assistantText = '';
 
-  const profile = await prisma.user.findUnique(
-    ({
-      where: { id: user.id },
-      select: { aiInstructions: true },
-    } as unknown) as Parameters<typeof prisma.user.findUnique>[0],
-  );
+  const profileData = await db
+    .select({ aiInstructions: users.aiInstructions })
+    .from(users)
+    .where(eq(users.id, user.id))
+    .limit(1);
+  const profile = profileData[0];
 
   const assistantMessageId = crypto.randomUUID();
 
@@ -369,12 +378,12 @@ export async function handleTemporaryChatSse(c: Context) {
   const resolvedModel = gateway(selectedModel as any);
   let assistantText = '';
 
-  const profile = await prisma.user.findUnique(
-    ({
-      where: { id: user.id },
-      select: { aiInstructions: true },
-    } as unknown) as Parameters<typeof prisma.user.findUnique>[0],
-  );
+  const profileData = await db
+    .select({ aiInstructions: users.aiInstructions })
+    .from(users)
+    .where(eq(users.id, user.id))
+    .limit(1);
+  const profile = profileData[0];
 
   return streamSSE(c, async (stream) => {
     await stream.writeSSE({

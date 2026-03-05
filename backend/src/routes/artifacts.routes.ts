@@ -3,7 +3,9 @@ import { generateText, gateway } from 'ai'
 import { z } from 'zod'
 import { Receiver } from '@upstash/qstash'
 import { env } from './../common/env.js'
-import { prisma } from './../common/prisma.js'
+import { db } from '../common/db.js'
+import { eq, desc } from 'drizzle-orm'
+import { artifact } from '../db/schema.js'
 
 const artifactsRouter = new Hono()
 
@@ -90,23 +92,25 @@ artifactsRouter.post('/process', async (c) => {
 
 		const artifactTitle = title
 
-		const existingArtifact = await prisma.artifact.findFirst({
-			where: { messageId },
-		})
+		const existingArtifact = await db
+			.select({ id: artifact.id, title: artifact.title })
+			.from(artifact)
+			.where(eq(artifact.messageId, messageId))
+			.limit(1)
 
-		if (existingArtifact) {
+		if (existingArtifact.length > 0) {
 			console.log('[artifact-process] Artifact already exists for this messageId, skipping')
-			return c.json({ success: true, title: existingArtifact.title, skipped: true })
+			return c.json({ success: true, title: existingArtifact[0].title, skipped: true })
 		}
 
-		await prisma.artifact.create({
-			data: {
-				chatId,
-				messageId,
-				title: artifactTitle,
-				content: { raw: content },
-				status: 'completed',
-			},
+		await db.insert(artifact).values({
+			chatId,
+			messageId,
+			title: artifactTitle,
+			content: { raw: content },
+			status: 'completed',
+			createdAt: new Date(),
+			updatedAt: new Date(),
 		})
 
 		console.log('[artifact-process] Saved to database successfully')
@@ -129,10 +133,11 @@ artifactsRouter.get('/', async (c) => {
 		return c.json({ error: 'chatId is required' }, 400)
 	}
 
-	const artifacts = await prisma.artifact.findMany({
-		where: { chatId },
-		orderBy: { createdAt: 'desc' },
-	})
+	const artifacts = await db
+		.select()
+		.from(artifact)
+		.where(eq(artifact.chatId, chatId))
+		.orderBy(desc(artifact.createdAt))
 
 	return c.json(artifacts)
 })

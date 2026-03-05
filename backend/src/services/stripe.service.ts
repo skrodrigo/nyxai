@@ -1,7 +1,9 @@
 import type Stripe from 'stripe';
+import { eq, and, isNull } from 'drizzle-orm';
 import { stripe } from './../common/stripe.js';
-import { prisma } from './../common/prisma.js';
+import { db } from '../common/db.js';
 import { env } from './../common/env.js';
+import { users, subscription, userUsage } from '../db/schema.js';
 
 function getWebUrl() {
   return env.WEB_URL.replace(/\/$/, '');
@@ -72,48 +74,51 @@ export const stripeService = {
     }
   },
   async getOrCreateCustomerForUser(userId: string, requestId?: string) {
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        stripeCustomerId: true,
-      },
-    });
-    if (!user) throw new Error('User not found');
+    const userData = await db
+      .select({
+        id: users.id,
+        email: users.email,
+        name: users.name,
+        stripeCustomerId: users.stripeCustomerId,
+      })
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
 
-    if (user.stripeCustomerId) {
+    if (userData.length === 0) throw new Error('User not found');
+    const userRow = userData[0];
+
+    if (userRow.stripeCustomerId) {
       try {
-        const existing = await stripe.customers.retrieve(user.stripeCustomerId);
+        const existing = await stripe.customers.retrieve(userRow.stripeCustomerId);
         if (existing && !('deleted' in existing)) {
-          return { customerId: user.stripeCustomerId };
+          return { customerId: userRow.stripeCustomerId };
         }
       } catch {
-        await prisma.user.updateMany({
-          where: { id: user.id, stripeCustomerId: user.stripeCustomerId },
-          data: { stripeCustomerId: null },
-        });
+        await db
+          .update(users)
+          .set({ stripeCustomerId: null })
+          .where(and(eq(users.id, userRow.id), eq(users.stripeCustomerId, userRow.stripeCustomerId)));
       }
     }
 
     const customer = await stripe.customers.create(
       {
-        email: user.email,
-        name: user.name,
-        metadata: { userId: user.id },
+        email: userRow.email,
+        name: userRow.name ?? undefined,
+        metadata: { userId: userRow.id },
       },
       requestId
         ? {
-          idempotencyKey: `customer:${user.id}:${requestId}`,
+          idempotencyKey: `customer:${userRow.id}:${requestId}`,
         }
         : undefined,
     );
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { stripeCustomerId: customer.id },
-    });
+    await db
+      .update(users)
+      .set({ stripeCustomerId: customer.id })
+      .where(eq(users.id, userRow.id));
 
     return { customerId: customer.id };
   },
@@ -282,49 +287,51 @@ export const stripeService = {
   },
 
   async cancelSubscription(params: { userId: string }) {
-    const sub = await prisma.subscription.findFirst({
-      where: { referenceId: params.userId, status: 'active' },
-      select: { stripeSubscriptionId: true },
-    });
+    const sub = await db
+      .select({ stripeSubscriptionId: subscription.stripeSubscriptionId })
+      .from(subscription)
+      .where(and(eq(subscription.referenceId, params.userId), eq(subscription.status, 'active')))
+      .limit(1);
 
-    if (!sub?.stripeSubscriptionId) return { success: true };
+    if (sub.length === 0 || !sub[0].stripeSubscriptionId) return { success: true };
 
-    const canceled = await stripe.subscriptions.cancel(sub.stripeSubscriptionId);
+    const canceled = await stripe.subscriptions.cancel(sub[0].stripeSubscriptionId);
     const item = canceled.items.data?.[0];
 
-    await prisma.subscription.updateMany({
-      where: { referenceId: params.userId, stripeSubscriptionId: canceled.id },
-      data: {
+    await db
+      .update(subscription)
+      .set({
         status: canceled.status,
         cancelAtPeriodEnd: canceled.cancel_at_period_end,
         periodStart:
           typeof item?.current_period_start === 'number' ? new Date(item.current_period_start * 1000) : null,
         periodEnd: typeof item?.current_period_end === 'number' ? new Date(item.current_period_end * 1000) : null,
-      },
-    });
+      })
+      .where(and(eq(subscription.referenceId, params.userId), eq(subscription.stripeSubscriptionId, canceled.id)));
 
     return { success: true };
   },
 
   async handleCustomerDeleted(customerId: string) {
-    const user = await prisma.user.findFirst({
-      where: { stripeCustomerId: customerId },
-      select: { id: true },
-    });
+    const userData = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.stripeCustomerId, customerId))
+      .limit(1);
 
-    await prisma.user.updateMany({
-      where: { stripeCustomerId: customerId },
-      data: { stripeCustomerId: null },
-    });
+    await db
+      .update(users)
+      .set({ stripeCustomerId: null })
+      .where(eq(users.stripeCustomerId, customerId));
 
-    await prisma.subscription.deleteMany({
-      where: { stripeCustomerId: customerId },
-    });
+    await db
+      .delete(subscription)
+      .where(eq(subscription.stripeCustomerId, customerId));
 
-    if (user?.id) {
-      await prisma.userUsage.deleteMany({
-        where: { userId: user.id },
-      });
+    if (userData.length > 0) {
+      await db
+        .delete(userUsage)
+        .where(eq(userUsage.userId, userData[0].id));
     }
 
     return { success: true };
@@ -346,10 +353,10 @@ export const stripeService = {
           }
 
           if (userId) {
-            await prisma.user.updateMany({
-              where: { id: userId, stripeCustomerId: null },
-              data: { stripeCustomerId: customerId },
-            });
+            await db
+              .update(users)
+              .set({ stripeCustomerId: customerId })
+              .where(and(eq(users.id, userId), isNull(users.stripeCustomerId)));
           }
         }
       } catch (err) {
@@ -378,43 +385,50 @@ export const stripeService = {
           ? item.price.id
           : null;
 
-    await prisma.subscription.upsert({
-      where: { id: sub.id },
-      update: {
-        referenceId: userId,
-        stripeCustomerId: customerId ?? null,
-        stripeSubscriptionId: sub.id,
-        status: sub.status,
-        cancelAtPeriodEnd: sub.cancel_at_period_end,
-        periodStart: typeof item?.current_period_start === 'number' ? new Date(item.current_period_start * 1000) : null,
-        periodEnd: typeof item?.current_period_end === 'number' ? new Date(item.current_period_end * 1000) : null,
-        plan: priceId ?? 'unknown',
-      },
-      create: {
-        id: sub.id,
-        referenceId: userId,
-        stripeCustomerId: customerId ?? null,
-        stripeSubscriptionId: sub.id,
-        status: sub.status,
-        cancelAtPeriodEnd: sub.cancel_at_period_end,
-        periodStart: typeof item?.current_period_start === 'number' ? new Date(item.current_period_start * 1000) : null,
-        periodEnd: typeof item?.current_period_end === 'number' ? new Date(item.current_period_end * 1000) : null,
-        plan: priceId ?? 'unknown',
-      },
-    });
+    const subscriptionData = {
+      id: sub.id,
+      referenceId: userId,
+      stripeCustomerId: customerId ?? null,
+      stripeSubscriptionId: sub.id,
+      status: sub.status,
+      cancelAtPeriodEnd: sub.cancel_at_period_end,
+      periodStart: typeof item?.current_period_start === 'number' ? new Date(item.current_period_start * 1000) : null,
+      periodEnd: typeof item?.current_period_end === 'number' ? new Date(item.current_period_end * 1000) : null,
+      plan: priceId ?? 'unknown',
+    };
 
-    await prisma.userUsage.upsert({
-      where: { userId },
-      update: {},
-      create: {
-        userId,
-        dayCount: 0,
-        weekCount: 0,
-        monthCount: 0,
-        dayWindowStart: new Date(),
-        weekWindowStart: new Date(),
-        monthWindowStart: new Date(),
-      },
-    })
+    try {
+      await db.insert(subscription).values(subscriptionData);
+    } catch {
+      await db
+        .update(subscription)
+        .set({
+          referenceId: subscriptionData.referenceId,
+          stripeCustomerId: subscriptionData.stripeCustomerId,
+          stripeSubscriptionId: subscriptionData.stripeSubscriptionId,
+          status: subscriptionData.status,
+          cancelAtPeriodEnd: subscriptionData.cancelAtPeriodEnd,
+          periodStart: subscriptionData.periodStart,
+          periodEnd: subscriptionData.periodEnd,
+          plan: subscriptionData.plan,
+        })
+        .where(eq(subscription.id, sub.id));
+    }
+
+    const usageData = {
+      userId,
+      dayCount: 0,
+      weekCount: 0,
+      monthCount: 0,
+      dayWindowStart: new Date(),
+      weekWindowStart: new Date(),
+      monthWindowStart: new Date(),
+    };
+
+    try {
+      await db.insert(userUsage).values(usageData);
+    } catch {
+      // Already exists, no update needed
+    }
   },
 };

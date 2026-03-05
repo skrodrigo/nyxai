@@ -1,8 +1,10 @@
-import { prisma } from './../common/prisma.js';
-import { env } from './../common/env.js';
-import { HTTPException } from 'hono/http-exception';
-import type { RegisterData, LoginData } from './../dtos/auth.dto.js';
-import crypto from 'node:crypto';
+import { eq } from 'drizzle-orm'
+import { db } from '../common/db.js'
+import { env } from './../common/env.js'
+import { HTTPException } from 'hono/http-exception'
+import type { RegisterData, LoginData } from './../dtos/auth.dto.js'
+import { users } from './../db/schema.js'
+import crypto from 'node:crypto'
 
 const SALT_BYTES = 16;
 const KEY_BYTES = 32;
@@ -47,45 +49,48 @@ export function signJwt(payload: object) {
 
 export const authService = {
   async register(data: RegisterData) {
-    const existing = await prisma.user.findUnique({
-      where: { email: data.email },
-      select: { id: true },
-    });
-    if (existing) {
+    const existing = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, data.email))
+      .limit(1);
+    if (existing.length > 0) {
       throw new HTTPException(409, { message: 'User with this email already exists' });
     }
 
-    const user = await prisma.user.create({
-      data: {
+    const newUser = await db
+      .insert(users)
+      .values({
         name: data.name,
         email: data.email,
         password: hashPassword(data.password),
         emailVerified: false,
-      },
-      select: {
-        id: true,
-        email: true,
-      },
-    });
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .returning({ id: users.id, email: users.email })
+      .then((rows) => rows[0]);
 
-    return user;
+    return newUser;
   },
 
   async login(data: LoginData) {
-    const user = await prisma.user.findUnique({
-      where: { email: data.email },
-      select: { id: true, password: true, email: true, emailVerified: true },
-    });
-    if (!user) {
+    const userData = await db
+      .select({ id: users.id, password: users.password, email: users.email, emailVerified: users.emailVerified })
+      .from(users)
+      .where(eq(users.email, data.email))
+      .limit(1);
+    if (userData.length === 0) {
       throw new HTTPException(401, { message: 'Invalid credentials' });
     }
 
-    const ok = verifyPassword(data.password, user.password);
+    const found = userData[0];
+    const ok = verifyPassword(data.password, found.password);
     if (!ok) {
       throw new HTTPException(401, { message: 'Invalid credentials' });
     }
 
-    const token = signJwt({ userId: user.id });
-    return { token, email: user.email, emailVerified: user.emailVerified };
+    const token = signJwt({ userId: found.id });
+    return { token, email: found.email, emailVerified: found.emailVerified };
   },
 };

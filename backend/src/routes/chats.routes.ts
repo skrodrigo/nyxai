@@ -5,7 +5,9 @@ import { chatRepository } from './../repositories/chat.repository.js';
 import { chatBranchRepository } from './../repositories/chat-branch.repository.js';
 import { messageRepository } from './../repositories/message.repository.js';
 import { HTTPException } from 'hono/http-exception';
-import { prisma } from './../common/prisma.js';
+import { db } from '../common/db.js';
+import { eq, and, isNull } from 'drizzle-orm';
+import { chat as chatTable, message, chatBranch } from '../db/schema.js';
 import crypto from 'node:crypto';
 
 const chatsRouter = new OpenAPIHono<{ Variables: AppVariables }>();
@@ -241,19 +243,21 @@ chatsRouter.openapi(listRoute, async (c) => {
 
 chatsRouter.openapi(archiveAllRoute, async (c) => {
   const user = c.get('user');
-  const archived = await prisma.chat.updateMany({
-    where: { userId: user!.id, archivedAt: null },
-    data: { archivedAt: new Date() },
-  });
-  return c.json({ success: true, archivedCount: archived.count }, 200);
+  const archived = await db
+    .update(chatTable)
+    .set({ archivedAt: new Date() })
+    .where(and(eq(chatTable.userId, user!.id), isNull(chatTable.archivedAt)))
+    .returning({ id: chatTable.id });
+  return c.json({ success: true, archivedCount: archived.length }, 200);
 });
 
 chatsRouter.openapi(deleteAllRoute, async (c) => {
   const user = c.get('user');
-  const deleted = await prisma.chat.deleteMany({
-    where: { userId: user!.id },
-  });
-  return c.json({ success: true, deletedCount: deleted.count }, 200);
+  const deleted = await db
+    .delete(chatTable)
+    .where(eq(chatTable.userId, user!.id))
+    .returning({ id: chatTable.id });
+  return c.json({ success: true, deletedCount: deleted.length }, 200);
 });
 
 chatsRouter.openapi(deleteRoute, async (c) => {
@@ -361,14 +365,16 @@ chatsRouter.openapi(listMessageBranchesRoute, async (c) => {
   if (!chat) throw new HTTPException(404, { message: 'Chat not found' });
 
   const ensured = await chatBranchRepository.ensureDefaultBranch(id);
-  const effectiveBranchId = currentBranchId ?? (await prisma.chat.findUnique({ where: { id }, select: { activeBranchId: true } }))?.activeBranchId ?? ensured?.id ?? null;
+  const chatData = await db.select({ activeBranchId: chatTable.activeBranchId }).from(chatTable).where(eq(chatTable.id, id)).limit(1);
+  const effectiveBranchId = currentBranchId ?? chatData[0]?.activeBranchId ?? ensured?.id ?? null;
   if (!effectiveBranchId) throw new HTTPException(404, { message: 'Branch not found' });
 
-  const currentMessage = await prisma.message.findFirst({
-    where: { id: messageId, chatId: id },
-    select: { id: true },
-  });
-  if (!currentMessage) throw new HTTPException(404, { message: 'Message not found' });
+  const messageData = await db
+    .select({ id: message.id })
+    .from(message)
+    .where(and(eq(message.id, messageId), eq(message.chatId, id)))
+    .limit(1);
+  if (messageData.length === 0) throw new HTTPException(404, { message: 'Message not found' });
 
   const payload = await chatBranchRepository.listVersionBranchesForMessage({
     chatId: id,
@@ -394,11 +400,12 @@ chatsRouter.openapi(selectBranchRoute, async (c) => {
   const chat = await chatRepository.findMetaForUser(id, user!.id);
   if (!chat) throw new HTTPException(404, { message: 'Chat not found' });
 
-  const branch = await prisma.chatBranch.findFirst({
-    where: { id: branchId, chatId: id },
-    select: { id: true },
-  });
-  if (!branch) throw new HTTPException(404, { message: 'Branch not found' });
+  const branchData = await db
+    .select({ id: chatBranch.id })
+    .from(chatBranch)
+    .where(and(eq(chatBranch.id, branchId), eq(chatBranch.chatId, id)))
+    .limit(1);
+  if (branchData.length === 0) throw new HTTPException(404, { message: 'Branch not found' });
 
   const updated = await chatBranchRepository.setActiveBranch(id, branchId);
   return c.json({ success: true, data: updated }, 200);
