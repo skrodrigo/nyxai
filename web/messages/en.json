@@ -56,7 +56,7 @@
 	"sidebar": {
 		"newChat": "New Chat",
 		"toggleSidebar": "Toggle sidebar",
-		"searchChats": "Search chats",
+		"searchChats": "Search Chats",
 		"searchTitle": "Search",
 		"searchDescription": "Search your chats",
 		"searchPlaceholder": "Search...",
@@ -166,7 +166,7 @@
 	"spotlightDialog": {
 		"title": "Search chat",
 		"description": "Search and navigate to a chat",
-		"placeholder": "Search chats...",
+		"placeholder": "Search Chats...",
 		"noResults": "No results.",
 		"chatsHeading": "Chats"
 	},
