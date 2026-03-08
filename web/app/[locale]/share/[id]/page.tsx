@@ -54,7 +54,7 @@ export default async function SharedChatPage({ params }: { params: Promise<{ id:
   const messages = Array.isArray(chat?.messages) ? chat.messages : [];
 
   return (
-    <div className="relative flex flex-col h-screen w-full p-4">
+    <div className="relative flex flex-col h-dvh w-full p-4">
       <div className="grow overflow-y-auto h-full rounded-md scrollbar-hidden">
         <Conversation className="grow w-full max-w-3xl mx-auto h-full">
           <ConversationContent>
@@ -89,6 +89,6 @@ export default async function SharedChatPage({ params }: { params: Promise<{ id:
           </Link>
         </Button>
       </div>
-    </div>
+    </div >
   );
 }

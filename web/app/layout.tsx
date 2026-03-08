@@ -13,7 +13,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className="h-screen overflow-hidden" suppressHydrationWarning>{children}</body>
+      <body className="h-dvh overflow-hidden" suppressHydrationWarning>{children}</body>
     </html>
   );
 }

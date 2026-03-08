@@ -794,7 +794,7 @@ export function Chat({
   }
 
   return (
-    <div className="flex h-screen w-full overflow-hidden p-2 md:p-0">
+    <div className="flex h-dvh w-full overflow-hidden p-2 md:p-0">
       {isMobile ? (
         <>
           <div className="flex flex-col h-full w-full overflow-hidden">

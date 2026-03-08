@@ -104,7 +104,7 @@ export default function HomePage() {
   }
 
   return (
-    <div className="flex flex-col min-h-screen bg-background">
+    <div className="flex flex-col min-h-dvh bg-background">
       <Header onSignInClick={() => setShowSignIn(true)} onSignUpClick={() => setShowSignUp(true)} />
       <main className="flex flex-col items-center justify-center grow">
         <div className="w-full max-w-3xl px-4 flex flex-col items-center space-y-4">
