@@ -45,6 +45,21 @@
   --radius-2xl: calc(var(--radius) + 8px);
   --radius-3xl: calc(var(--radius) + 12px);
   --radius-4xl: calc(var(--radius) + 16px);
+  --color-context-card-border: var(--context-card-border);
+  --color-gray-900: var(--ds-gray-900);
+  --animate-loading: loading 1.4s linear infinite;
+  --color-ds-gray-900: var(----ds-gray-900);
+  @keyframes loading {
+  0% {
+    opacity: 0.2;
+    }
+  20% {
+    opacity: 1;
+    }
+  100% {
+    opacity: 0.2;
+    }
+  }
 }
 
 :root {
@@ -100,6 +115,8 @@
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
+  --context-card-border: hsla(0, 0%, 92%, 1);
+  --ds-gray-900: hsla(0, 0%, 40%, 1);
 }
 
 .dark {
@@ -153,6 +170,8 @@
   --shadow-lg: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 4px 6px -1px hsl(0 0% 0% / 0.10);
   --shadow-xl: 0 1px 3px 0px hsl(0 0% 0% / 0.10), 0 8px 10px -1px hsl(0 0% 0% / 0.10);
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  --context-card-border: hsla(0, 0%, 18%, 1);
+  --ds-gray-900: hsla(0, 0%, 63%, 1);
 }
 
 @layer base {
@@ -181,4 +200,19 @@ body {
 html.scrollbar-hidden,
 body.scrollbar-hidden {
 	overflow: hidden;
+}
+
+@keyframes shine-rotate {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
+@keyframes pulse-border {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.5; }
+}
+
+.shine-border {
+	background: conic-gradient(from 0deg, transparent 0%, rgba(255,255,255,0.9) 30%, transparent 60%);
+	animation: shine-rotate 1.5s linear infinite, pulse-border 1.5s ease-in-out infinite;
 }

@@ -474,8 +474,9 @@ export function Chat({
 
     setInput('');
 
+    const userMessageId = nanoid()
     const userMessage: UIMessage = {
-      id: Date.now().toString(),
+      id: userMessageId,
       role: 'user',
       parts: [{ type: 'text', text: trimmedInput }],
     };
@@ -491,6 +492,19 @@ export function Chat({
 
     const assistantMessageIdRef = { current: assistantMessage.id }
     let assistantMessageIdFromServer: string | null = null
+
+    const generatedChatId = !effectiveChatId ? nanoid() : null
+    const requestChatId = effectiveChatId || generatedChatId
+
+    if (generatedChatId && !isTemporary) {
+      setRuntimeChatId(generatedChatId)
+      if (typeof window !== 'undefined') {
+        const locale = getLocaleFromPathname(pathname)
+        const nextPath = locale ? `/${locale}/chat/${generatedChatId}` : `/chat/${generatedChatId}`
+        window.history.replaceState(null, '', nextPath)
+        window.dispatchEvent(new Event('chats:refresh'))
+      }
+    }
 
     setMessages([...updatedMessages, assistantMessage]);
     setIsStreaming(true);
@@ -571,7 +585,7 @@ export function Chat({
           messages: updatedMessages,
           model,
           webSearch: canWebSearch ? webSearch : false,
-          chatId: effectiveChatId,
+          chatId: requestChatId,
           branchId: activeBranchId,
         },
         onEvent: (ev) => {
@@ -619,6 +633,11 @@ export function Chat({
                   : msg,
               ),
             )
+          }
+
+          if (ev.type === 'chat.title') {
+            setTitle(ev.title)
+            router.refresh()
           }
 
           if (ev.type === 'response.error') {
@@ -834,16 +853,19 @@ export function Chat({
                   })}
                 </PromptInputModelSelectContent>
               </PromptInputModelSelect>
-              {initialTitle && chatId && (
+              {effectiveChatId && (
                 <>
-                  <span className="absolute hidden md:block left-1/2 -translate-x-1/2 font-medium text-sm text-muted-foreground/60 truncate max-w-[50%]">{title || initialTitle}</span>
-                  <div className="ml-auto flex items-center gap-2">
+                  <div className="flex-1 text-center px-4">
+                    <span className="font-medium text-sm text-muted-foreground/60 truncate block max-w-[200px] md:max-w-[400px] mx-auto">{title || initialTitle || 'New chat'}</span>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
                           <button type="button" onClick={handleShare}
-                            disabled={isPending}>
-                            <Icon icon={Share03Icon} className="size-5 mr-1" />
+                            disabled={isPending || isStreaming}
+                            className="p-1">
+                            <Icon icon={Share03Icon} className="size-5" />
                           </button>
                         </TooltipTrigger>
                         <TooltipContent side="bottom" sideOffset={6}>
@@ -856,7 +878,8 @@ export function Chat({
                         <Tooltip>
                           <DropdownMenuTrigger asChild>
                             <TooltipTrigger asChild>
-                              <button type="button">
+                              <button type="button" disabled={isStreaming}
+                                className="p-1">
                                 <Icon icon={MoreHorizontalIcon} className="size-6" />
                               </button>
                             </TooltipTrigger>
@@ -865,19 +888,19 @@ export function Chat({
                         </Tooltip>
                       </TooltipProvider>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={handleTogglePin} disabled={isPending || isLoading}>
+                        <DropdownMenuItem onClick={handleTogglePin} disabled={isPending || isLoading || isStreaming}>
                           <Icon
                             icon={isPinned ? PinOffIcon : PinIcon}
                             className="text-muted-foreground mr-2 size-[18px]"
                           />
                           <span>{isPinned ? t('unpin') : t('pin')}</span>
                         </DropdownMenuItem>
-                        <DropdownMenuItem onClick={handleOpenRename} disabled={isPending || isLoading}>
+                        <DropdownMenuItem onClick={handleOpenRename} disabled={isPending || isLoading || isStreaming}>
                           <Icon icon={Edit03Icon} className="text-muted-foreground mr-2 size-[18px]" />
                           <span>{t('rename')}</span>
                         </DropdownMenuItem>
                         <DropdownMenuSeparator />
-                        <DropdownMenuItem onClick={handleArchive} disabled={isPending}>
+                        <DropdownMenuItem onClick={handleArchive} disabled={isPending || isStreaming}>
                           <Icon icon={Archive03Icon} className="text-muted-foreground mr-2 size-[18px]" />
                           <span>{t('archive')}</span>
                         </DropdownMenuItem>
@@ -885,7 +908,7 @@ export function Chat({
                         <DropdownMenuItem
                           className="focus:bg-destructive/20"
                           onClick={() => setDeleteDialogOpen(true)}
-                          disabled={isPending}
+                          disabled={isPending || isStreaming}
                         >
                           <Icon icon={Delete02Icon} className="text-muted-foreground mr-2 size-[18px]" />
                           <span>{t('delete')}</span>
@@ -895,7 +918,7 @@ export function Chat({
                   </div>
                 </>
               )}
-              {!chatId && (
+              {!effectiveChatId && (
                 <div className="ml-auto flex items-center gap-2">
                   {isPro === false && (
                     <Button
@@ -1185,16 +1208,19 @@ export function Chat({
                     })}
                   </PromptInputModelSelectContent>
                 </PromptInputModelSelect>
-                {initialTitle && chatId && (
+                {effectiveChatId && (
                   <>
-                    <span className="absolute hidden md:block left-1/2 -translate-x-1/2 font-medium text-sm text-muted-foreground/60 truncate max-w-[50%]">{title || initialTitle}</span>
+                    <div className="flex-1 text-center px-4 hidden md:block">
+                      <span className="font-medium text-sm text-muted-foreground/60 truncate block max-w-[200px] md:max-w-[400px] mx-auto">{title || initialTitle || 'New chat'}</span>
+                    </div>
                     <div className="ml-auto flex items-center gap-2">
                       <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <button type="button" onClick={handleShare}
-                              disabled={isPending}>
-                              <Icon icon={Share03Icon} className="size-6 md:size-5 mr-1" />
+                              disabled={isPending || isStreaming}
+                              className="p-1 flex justify-center items-center">
+                              <Icon icon={Share03Icon} className="size-6 md:size-5" />
                             </button>
                           </TooltipTrigger>
                           <TooltipContent side="bottom" sideOffset={6}>
@@ -1207,8 +1233,9 @@ export function Chat({
                           <Tooltip>
                             <DropdownMenuTrigger asChild>
                               <TooltipTrigger asChild>
-                                <button type="button" className="size-8">
-                                  <Icon icon={MoreHorizontalIcon} className="size-[18px] md:size-[18px]" />
+                                <button type="button" disabled={isStreaming}
+                                  className="p-1 flex justify-center items-center">
+                                  <Icon icon={MoreHorizontalIcon} className="size-6 md:size-5" />
                                 </button>
                               </TooltipTrigger>
                             </DropdownMenuTrigger>
@@ -1216,19 +1243,19 @@ export function Chat({
                           </Tooltip>
                         </TooltipProvider>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={handleTogglePin} disabled={isPending || isLoading}>
+                          <DropdownMenuItem onClick={handleTogglePin} disabled={isPending || isLoading || isStreaming}>
                             <Icon
                               icon={isPinned ? PinOffIcon : PinIcon}
                               className="text-muted-foreground mr-2 size-[18px]"
                             />
                             <span>{isPinned ? t('unpin') : t('pin')}</span>
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={handleOpenRename} disabled={isPending || isLoading}>
+                          <DropdownMenuItem onClick={handleOpenRename} disabled={isPending || isLoading || isStreaming}>
                             <Icon icon={Edit03Icon} className="text-muted-foreground mr-2 size-[18px]" />
                             <span>{t('rename')}</span>
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
-                          <DropdownMenuItem onClick={handleArchive} disabled={isPending}>
+                          <DropdownMenuItem onClick={handleArchive} disabled={isPending || isStreaming}>
                             <Icon icon={Archive03Icon} className="text-muted-foreground mr-2 size-[18px]" />
                             <span>{t('archive')}</span>
                           </DropdownMenuItem>
@@ -1236,7 +1263,7 @@ export function Chat({
                           <DropdownMenuItem
                             className="focus:bg-destructive/20"
                             onClick={() => setDeleteDialogOpen(true)}
-                            disabled={isPending}
+                            disabled={isPending || isStreaming}
                           >
                             <Icon icon={Delete02Icon} className="text-muted-foreground mr-2 size-[18px]" />
                             <span>{t('delete')}</span>
@@ -1246,7 +1273,7 @@ export function Chat({
                     </div>
                   </>
                 )}
-                {!chatId && (
+                {!effectiveChatId && (
                   <div className="ml-auto flex items-center gap-2">
                     {isPro === false && (
                       <Button

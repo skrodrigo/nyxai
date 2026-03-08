@@ -195,19 +195,27 @@ export async function handleChatSse(c: Context) {
     throw new HTTPException(400, { message: 'Invalid request: last message text is required' });
   }
 
+  const selectedModel = model || 'google/gemini-2.5-flash';
+  const resolvedModel = gateway(selectedModel as any);
+  const assistantMessageId = crypto.randomUUID();
+  const history = toHistoryFromClient(rawMessages);
+
+  let titlePromise: Promise<string> | null = null;
+
   if (chatId) {
     const existing = await chatRepository.findMetaForUser(chatId, user.id);
     if (!existing) {
-      chatId = null;
+      const created = await chatRepository.createWithId(chatId, user.id, 'New chat', model);
+      titlePromise = generateChatTitle(userText);
+    } else if (model) {
+      await chatRepository.updateModel(chatId, model);
     }
   }
 
   if (!chatId) {
-    const chatTitle = await generateChatTitle(userText);
-    const created = await chatRepository.create(user.id, chatTitle, model);
+    const created = await chatRepository.create(user.id, 'New chat', model);
     chatId = created.id;
-  } else if (model) {
-    await chatRepository.updateModel(chatId, model);
+    titlePromise = generateChatTitle(userText);
   }
 
   const ensured = await chatBranchRepository.ensureDefaultBranch(chatId);
@@ -242,31 +250,19 @@ export async function handleChatSse(c: Context) {
 
     const chatData2 = await db.select({ activeBranchId: chat.activeBranchId }).from(chat).where(eq(chat.id, chatId)).limit(1);
     branchId = chatData2[0]?.activeBranchId ?? branchId;
-  } else {
-    const createdUserMessage = await messageRepository.create(chatId!, 'user', { type: 'text', text: userText });
-    await chatBranchRepository.appendMessageToBranch(branchId!, createdUserMessage.id);
   }
+
   await incrementUserUsage(user.id);
-
-  const history = toHistoryFromClient(rawMessages);
-  const selectedModel = model || 'google/gemini-2.5-flash';
-  const resolvedModel = gateway(selectedModel as any);
-  let assistantText = '';
-
-  const profileData = await db
-    .select({ aiInstructions: users.aiInstructions })
-    .from(users)
-    .where(eq(users.id, user.id))
-    .limit(1);
-  const profile = profileData[0];
-
-  const assistantMessageId = crypto.randomUUID();
 
   return streamSSE(c, async (stream) => {
     await stream.writeSSE({
       event: 'message',
       data: JSON.stringify({ type: 'chat.created', chatId, branchId, assistantMessageId }),
     });
+
+    let assistantText = '';
+    let userMessageCreated = false;
+    let profileAiInstructions: string | null = null;
 
     stream.onAbort(async () => {
       try {
@@ -279,13 +275,23 @@ export async function handleChatSse(c: Context) {
     });
 
     try {
-      const modelMessages = await convertToModelMessages(history);
+      const [modelMessages, profileData] = await Promise.all([
+        convertToModelMessages(history),
+        db.select({ aiInstructions: users.aiInstructions }).from(users).where(eq(users.id, user.id)).limit(1),
+      ]);
+      profileAiInstructions = (profileData[0] as any)?.aiInstructions ?? null;
+
+      if (!isEdit) {
+        const createdUserMessage = await messageRepository.create(chatId!, 'user', { type: 'text', text: userText });
+        await chatBranchRepository.appendMessageToBranch(branchId!, createdUserMessage.id);
+        userMessageCreated = true;
+      }
 
       const result = streamText({
         model: resolvedModel,
         messages: modelMessages,
         system: getAssistantSystemPrompt({
-          aiInstructions: (profile as any)?.aiInstructions ?? null,
+          aiInstructions: profileAiInstructions,
         }),
         stopWhen: stepCountIs(5),
         tools: {
@@ -329,6 +335,12 @@ export async function handleChatSse(c: Context) {
 
       const createdAssistantMessage = await messageRepository.create(chatId!, 'assistant', { type: 'text', text: assistantText }, assistantMessageId);
       await chatBranchRepository.appendMessageToBranch(branchId!, createdAssistantMessage.id);
+
+      if (titlePromise) {
+        const title = await titlePromise;
+        await chatRepository.rename(chatId!, title);
+        await stream.writeSSE({ event: 'message', data: JSON.stringify({ type: 'chat.title', title }) });
+      }
 
       await stream.writeSSE({ event: 'message', data: JSON.stringify({ type: 'response.completed', chatId, branchId }) });
       await stream.writeSSE({ event: 'message', data: '[DONE]' });

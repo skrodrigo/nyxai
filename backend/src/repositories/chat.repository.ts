@@ -18,6 +18,30 @@ export const chatRepository = {
 			.then((rows) => rows[0])
 	},
 
+	createWithId(id: string, userId: string, title: string, model?: string) {
+		return db
+			.insert(chat)
+			.values({
+				id,
+				userId,
+				title,
+				model,
+				createdAt: new Date(),
+				updatedAt: new Date(),
+			})
+			.returning()
+			.then((rows) => rows[0])
+	},
+
+	rename(chatId: string, title: string) {
+		return db
+			.update(chat)
+			.set({ title, updatedAt: new Date() })
+			.where(eq(chat.id, chatId))
+			.returning()
+			.then((rows) => rows[0])
+	},
+
 	async findByIdForUser(chatId: string, userId: string, branchId?: string) {
 		const chatData = await db
 			.select({

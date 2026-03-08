@@ -108,7 +108,7 @@ export default function AppSidebar({ chats: initialChats, ...props }: AppSidebar
               }} />
             </div>
           </SidebarHeader >
-          <SidebarContent>
+          <SidebarContent className="scrollbar-hidden">
             <NavChatHistory chats={chats} onChatsChange={setChats} />
           </SidebarContent>
           <SidebarFooter>
