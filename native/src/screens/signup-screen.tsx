@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/form";
 
 const signupSchema = z.object({
+  name: z.string().min(1),
   email: z.string().email(),
   password: z.string().min(6),
 });
@@ -30,6 +31,7 @@ export default function SignupScreen() {
   const form = useForm<SignupFormValues>({
     resolver: zodResolver(signupSchema),
     defaultValues: {
+      name: "",
       email: "",
       password: "",
     },
@@ -39,6 +41,7 @@ export default function SignupScreen() {
     setLoading(true);
     try {
       await signUp({
+        name: data.name,
         email: data.email,
         password: data.password,
       });
@@ -61,6 +64,25 @@ export default function SignupScreen() {
           <Text className="mb-6 text-center text-2xl font-semibold">
             Sign up to get started
           </Text>
+          <View className="self-stretch">
+            <FormField
+              control={form.control}
+              name="name"
+              render={({ field }) => (
+                <FormItem>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      value={field.value}
+                      onChangeText={field.onChange}
+                      placeholder="Your name"
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </View>
           <View className="self-stretch">
             <FormField
               control={form.control}

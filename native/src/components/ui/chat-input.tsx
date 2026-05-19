@@ -1,37 +1,35 @@
+import { Ionicons } from "@expo/vector-icons";
 import type React from "react";
+import { forwardRef, useEffect, useState } from "react";
 import {
-  View,
-  type TextInput,
-  KeyboardAvoidingView,
+  Image,
   Keyboard,
-  useColorScheme,
+  KeyboardAvoidingView,
   Pressable,
   ScrollView,
-  ActivityIndicator,
+  type TextInput,
+  View,
+  useColorScheme,
 } from "react-native";
-import { Ionicons } from '@expo/vector-icons';
-import { Button } from "./button";
 import Animated, {
-  useAnimatedStyle,
-  useAnimatedKeyboard,
-  withSpring,
   FadeIn,
   FadeOut,
-  withTiming,
   Layout,
+  useAnimatedKeyboard,
+  useAnimatedStyle,
+  withSpring,
+  withTiming,
 } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { ChatTextInput } from "./chat-text-input";
-import { forwardRef, useEffect, useState } from "react";
-import { useImagePicker } from "@/hooks/useImagePicker";
-import { Image } from 'react-native'
 import { useStore } from "@/lib/globalStore";
+import { Button } from "./button";
+import { ChatTextInput } from "./chat-text-input";
 
 type Props = {
   input: string;
   onChangeText: (text: string) => void;
   onSubmit: (message: string) => void;
-  scrollViewRef: React.RefObject<ScrollView>;
+  scrollViewRef: React.RefObject<ScrollView | null>;
   focusOnMount?: boolean;
 };
 
@@ -68,8 +66,8 @@ const ImageItem = ({ uri, onRemove }: ImageItemProps) => {
         <Ionicons name="close" size={12} color="black" />
       </Pressable>
     </Animated.View>
-  )
-}
+  );
+};
 
 const SelectedImages = ({ uris, onRemove }: SelectedImagesProps) => {
   const animatedStyle = useAnimatedStyle(() => {
@@ -112,35 +110,31 @@ export const ChatInput = forwardRef<TextInput, Props>(
   ) => {
     const { bottom } = useSafeAreaInsets();
     const keyboard = useAnimatedKeyboard();
-    const { pickImage } = useImagePicker();
-    const { selectedImageUris, addImageUri, removeImageUri } = useStore();
+    const { selectedImageUris, removeImageUri } = useStore();
+    const [isMultiline, setIsMultiline] = useState(false);
 
     useEffect(() => {
       if (focusOnMount) {
         (ref as React.RefObject<TextInput>).current?.focus();
       }
-    }, [focusOnMount]);
+    }, [focusOnMount, ref]);
 
     useEffect(() => {
       const showSubscription = Keyboard.addListener("keyboardDidShow", () => {
         scrollViewRef.current?.scrollToEnd({ animated: true });
       });
-      const focusSubscription = Keyboard.addListener("keyboardWillShow", () => {
+      const willShowSubscription = Keyboard.addListener("keyboardWillShow", () => {
         scrollViewRef.current?.scrollToEnd({ animated: true });
       });
 
-      // const hideSubscription = Keyboard.addListener("keyboardDidHide", () => {
-      //   scrollViewRef.current?.scrollToEnd({ animated: true });
-      // });
-
       return () => {
         showSubscription.remove();
-        // hideSubscription.remove();
+        willShowSubscription.remove();
       };
     }, [scrollViewRef]);
 
     const animatedStyles = useAnimatedStyle(() => ({
-      paddingBottom: withSpring(keyboard.height.value - bottom, {
+      paddingBottom: withSpring(Math.max(0, keyboard.height.value - bottom), {
         damping: 20,
         stiffness: 200,
       }),
@@ -148,33 +142,35 @@ export const ChatInput = forwardRef<TextInput, Props>(
 
     const colorScheme = useColorScheme();
 
-    const handleAttachmentSelect = async (type: "photo" | "file") => {
-      if (type === "photo") {
-        const imageUris = await pickImage();
-        if (imageUris) {
-          imageUris.forEach((uri) => {
-            addImageUri(uri);
-          });
-        }
-      }
+    const handleTextChange = (text: string) => {
+      onChangeText(text);
+      setIsMultiline(text.includes("\n"));
     };
 
     return (
       <KeyboardAvoidingView>
         <Animated.View style={animatedStyles}>
           <SelectedImages uris={selectedImageUris} onRemove={removeImageUri} />
-          <View className="flex-row items-end gap-2 bg-background px-4 py-2">
-            <ChatTextInput
-              ref={ref}
-              className="flex-1 rounded-[20] bg-muted py-[8]"
-              placeholder="Message"
-              multiline
-              value={input}
-              onChangeText={onChangeText}
-            />
+          <View className={`flex-row gap-4 bg-background px-4 ${isMultiline ? "items-end py-4" : "items-center"}`}>
+            <View className={`max-h-32 flex-1 justify-center rounded-3xl bg-muted px-4 ${isMultiline ? "" : "h-12"}`}>
+              <ChatTextInput
+                ref={ref}
+                className="max-h-28 flex-1"
+                style={{ 
+                  minHeight: isMultiline ? 32 : 40, 
+                  maxHeight: 112, 
+                  paddingVertical: 0 
+                }}
+                placeholder="Message"
+                multiline
+                value={input}
+                onChangeText={handleTextChange}
+              />
+            </View>
             <Button
               size="icon"
-              className="android:h-12 android:w-12 rounded-full bg-black dark:bg-white"
+              className="rounded-full bg-zinc-950 dark:bg-zinc-50"
+              style={{ width: 48, height: 48 }}
               onPress={() => {
                 onSubmit(input);
                 Keyboard.dismiss();
@@ -182,7 +178,7 @@ export const ChatInput = forwardRef<TextInput, Props>(
             >
               <Ionicons
                 name="arrow-up"
-                color={colorScheme === 'dark' ? 'black' : 'white'}
+                color={colorScheme === "dark" ? "#09090b" : "#fafafa"}
                 size={20}
               />
             </Button>
@@ -192,3 +188,5 @@ export const ChatInput = forwardRef<TextInput, Props>(
     );
   },
 );
+
+ChatInput.displayName = "ChatInput";

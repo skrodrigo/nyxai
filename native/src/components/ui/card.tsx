@@ -1,10 +1,9 @@
-import type { TextRef, ViewRef } from "@rn-primitives/types";
 import * as React from "react";
 import { Text, type TextProps, View, type ViewProps } from "react-native";
-import { cn } from "@/lib/utils";
 import { TextClassContext } from "@/components/ui/text";
+import { cn } from "@/lib/utils";
 
-const Card = React.forwardRef<ViewRef, ViewProps>(
+const Card = React.forwardRef<React.ElementRef<typeof View>, ViewProps>(
   ({ className, ...props }, ref) => (
     <View
       ref={ref}
@@ -18,7 +17,7 @@ const Card = React.forwardRef<ViewRef, ViewProps>(
 );
 Card.displayName = "Card";
 
-const CardHeader = React.forwardRef<ViewRef, ViewProps>(
+const CardHeader = React.forwardRef<React.ElementRef<typeof View>, ViewProps>(
   ({ className, ...props }, ref) => (
     <View
       ref={ref}
@@ -29,12 +28,12 @@ const CardHeader = React.forwardRef<ViewRef, ViewProps>(
 );
 CardHeader.displayName = "CardHeader";
 
-const CardTitle = React.forwardRef<TextRef, TextProps>(
+const CardTitle = React.forwardRef<React.ElementRef<typeof Text>, TextProps>(
   ({ className, ...props }, ref) => (
     <Text
+      ref={ref}
       role="heading"
       aria-level={3}
-      ref={ref}
       className={cn(
         "text-2xl font-semibold leading-none tracking-tight text-card-foreground",
         className,
@@ -45,7 +44,7 @@ const CardTitle = React.forwardRef<TextRef, TextProps>(
 );
 CardTitle.displayName = "CardTitle";
 
-const CardDescription = React.forwardRef<TextRef, TextProps>(
+const CardDescription = React.forwardRef<React.ElementRef<typeof Text>, TextProps>(
   ({ className, ...props }, ref) => (
     <Text
       ref={ref}
@@ -56,7 +55,7 @@ const CardDescription = React.forwardRef<TextRef, TextProps>(
 );
 CardDescription.displayName = "CardDescription";
 
-const CardContent = React.forwardRef<ViewRef, ViewProps>(
+const CardContent = React.forwardRef<React.ElementRef<typeof View>, ViewProps>(
   ({ className, ...props }, ref) => (
     <TextClassContext.Provider value="text-card-foreground">
       <View ref={ref} className={cn("p-6 pt-0", className)} {...props} />
@@ -65,7 +64,7 @@ const CardContent = React.forwardRef<ViewRef, ViewProps>(
 );
 CardContent.displayName = "CardContent";
 
-const CardFooter = React.forwardRef<ViewRef, ViewProps>(
+const CardFooter = React.forwardRef<React.ElementRef<typeof View>, ViewProps>(
   ({ className, ...props }, ref) => (
     <View
       ref={ref}

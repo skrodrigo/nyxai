@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import type { UIMessage } from "ai";
+import { chatsApi } from '@/lib/api-client';
 import { convertToUIMessages } from "@/lib/utils";
 
 type ChatIdState = {
@@ -19,27 +20,20 @@ export function useChatFromHistory({ chatId, token }: UseChatFromHistoryProps) {
   useEffect(() => {
     if (chatId?.id && chatId.from === "history" && token) {
       setLoading(true);
-      fetch(`${process.env.EXPO_PUBLIC_API_URL}/api/chat/${chatId.id}`, {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      })
-        .then((res) => res.json())
+      chatsApi
+        .getById(chatId.id, token)
         .then((res) => {
-          const { messages } = res;
-          console.log(">>> messages from history:", messages);
+          const messages = res?.data?.messages ?? [];
 
-          if (messages && messages.length) {
-            const uiMessages = convertToUIMessages(messages);
-            console.log(">>> uiMessages:", uiMessages);
-            setInitialMessages(uiMessages);
+          if (messages.length) {
+            setInitialMessages(convertToUIMessages(messages));
+          } else {
+            setInitialMessages([]);
           }
           setLoading(false);
         })
         .catch((err) => {
-          console.error(">>> Error fetching chat messages:", err);
+          console.error('>>> Error fetching chat messages:', err);
           setInitialMessages([]);
           setLoading(false);
         });

@@ -1,22 +1,27 @@
-import React, {
+import {
   createContext,
   type PropsWithChildren,
   useCallback,
   useContext,
   useEffect,
-  useState,
   useMemo,
-} from "react";
-import { toast } from "@/components/sonner";
-import { useBoolean } from "usehooks-ts";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useStore } from "@/lib/globalStore";
+  useState,
+} from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { toast } from '@/components/sonner';
+import { useStore } from '@/lib/globalStore';
+import { type ApiUser, authApi } from '@/lib/api-client';
+
+type PendingVerification = {
+  email: string;
+} | null;
 
 type AuthState = {
   isAuthenticated: boolean;
   token?: string;
-  user?: { id: number; email: string };
-  session?: { token: string; id: number };
+  user?: ApiUser;
+  session?: { token: string; id: string };
+  pendingVerification: PendingVerification;
 };
 
 type SignInProps = {
@@ -25,6 +30,7 @@ type SignInProps = {
 };
 
 type SignUpProps = {
+  name: string;
   email: string;
   password: string;
 };
@@ -36,7 +42,9 @@ type AuthContextState = AuthState & {
 type AuthContextActions = {
   signIn: (props: SignInProps) => Promise<void>;
   signUp: (props: SignUpProps) => Promise<void>;
-  signOut: () => void;
+  verifyOtp: (code: string, emailOverride?: string) => Promise<void>;
+  clearPendingVerification: () => Promise<void>;
+  signOut: () => Promise<void>;
 };
 
 const AuthStateContext = createContext<AuthContextState | null>(null);
@@ -47,7 +55,7 @@ export function useAuth() {
   const actions = useContext(AuthActionsContext);
 
   if (!state || !actions) {
-    throw new Error("useAuth must be used within an AuthProvider");
+    throw new Error('useAuth must be used within an AuthProvider');
   }
 
   const session = useMemo(() => {
@@ -61,25 +69,57 @@ export function useAuth() {
   return { ...state, ...actions, session };
 }
 
+async function persistAuthenticatedState(
+  token: string,
+  setAuthState: (value: AuthState) => Promise<void>,
+) {
+  const user = await authApi.me(token);
+  await AsyncStorage.setItem('session', token);
+  await setAuthState({
+    isAuthenticated: true,
+    token,
+    user,
+    pendingVerification: null,
+  });
+}
+
 export const AuthProvider = ({ children }: PropsWithChildren) => {
   const [authState, setAuthState] = useAsyncState<AuthState>({
     isAuthenticated: false,
     token: undefined,
     user: undefined,
     session: undefined,
+    pendingVerification: null,
   });
-
-  const { value: isLoading, setValue: setIsLoading } = useBoolean(true);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     const loadAuthState = async () => {
       try {
-        const storedAuthState = await AsyncStorage.getItem("authState");
+        const storedAuthState = await AsyncStorage.getItem('authState');
+        const storedToken = await AsyncStorage.getItem('session');
+
         if (storedAuthState) {
-          setAuthState(JSON.parse(storedAuthState));
+          const parsed = JSON.parse(storedAuthState) as AuthState;
+          setAuthState(parsed);
+        }
+
+        if (storedToken) {
+          try {
+            await persistAuthenticatedState(storedToken, setAuthState);
+          } catch {
+            await AsyncStorage.removeItem('session');
+            await setAuthState({
+              isAuthenticated: false,
+              token: undefined,
+              user: undefined,
+              session: undefined,
+              pendingVerification: null,
+            });
+          }
         }
       } catch (error) {
-        console.error("Error loading auth state:", error);
+        console.error('Error loading auth state:', error);
       } finally {
         setIsLoading(false);
       }
@@ -93,102 +133,100 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
       signIn: async ({ email, password }: SignInProps) => {
         setIsLoading(true);
         try {
-          const response = await fetch(
-            `${process.env.EXPO_PUBLIC_API_URL}/api/token`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ email, password }),
-            },
-          );
+          const response = await authApi.login({ email, password });
 
-          const data = await response.json();
-
-          if (!response.ok) {
-            throw new Error(data.error || "Authentication failed");
+          if (response.otpRequired) {
+            await setAuthState({
+              isAuthenticated: false,
+              token: undefined,
+              user: undefined,
+              session: undefined,
+              pendingVerification: { email },
+            });
+            toast.success('Código enviado para seu email');
+            return;
           }
 
-          await AsyncStorage.setItem("session", data.token);
-          await setAuthState({
-            isAuthenticated: true,
-            token: data.token,
-            user: data.user,
-          });
+          if (!response.token) {
+            throw new Error('Token não recebido');
+          }
 
-          // Navigation will be handled by the component using this hook
+          await persistAuthenticatedState(response.token, setAuthState);
+          toast.success('Login realizado com sucesso');
         } catch (error) {
-          toast.error(error.message || "Invalid credentials");
+          toast.error(error instanceof Error ? error.message : 'Invalid credentials');
         } finally {
           setIsLoading(false);
         }
       },
-      signUp: async ({ email, password }: SignUpProps) => {
+      signUp: async ({ name, email, password }: SignUpProps) => {
         setIsLoading(true);
         try {
-          const response = await fetch(
-            `${process.env.EXPO_PUBLIC_API_URL}/api/auth/register`,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ email, password }),
-            },
-          );
+          const response = await authApi.register({ name, email, password });
 
-          const data = await response.json();
-
-          if (!response.ok) {
-            if (data.error?.includes("exists")) {
-              throw new Error("user_exists");
-            }
-            if (data.error?.includes("validation")) {
-              throw new Error("invalid_data");
-            }
-            throw new Error("failed");
+          if (response.otpRequired) {
+            await setAuthState({
+              isAuthenticated: false,
+              token: undefined,
+              user: undefined,
+              session: undefined,
+              pendingVerification: { email },
+            });
+            toast.success('Conta criada. Verifique o código enviado ao email');
+            return;
           }
 
-          await AsyncStorage.setItem("session", data.token);
-          await setAuthState({
-            isAuthenticated: true,
-            token: data.token,
-            user: data.user,
-          });
-
-          toast.success("Account created successfully");
-          // Navigation will be handled by the component using this hook
+          toast.success('Account created successfully');
         } catch (error) {
-          switch (error.message) {
-            case "user_exists":
-              toast.error("Account already exists");
-              break;
-            case "invalid_data":
-              toast.error("Failed validating your submission!");
-              break;
-            default:
-              toast.error("Failed to create account");
-          }
-          console.error("Signup error:", error);
+          toast.error(error instanceof Error ? error.message : 'Failed to create account');
+          console.error('Signup error:', error);
         } finally {
           setIsLoading(false);
         }
+      },
+      verifyOtp: async (code: string, emailOverride?: string) => {
+        const email = emailOverride || authState.pendingVerification?.email;
+        if (!email) {
+          toast.error('Nenhum email aguardando verificação');
+          return;
+        }
+
+        setIsLoading(true);
+        try {
+          const response = await authApi.verifyOtp(email, code);
+          await persistAuthenticatedState(response.token, setAuthState);
+          toast.success('Email verificado com sucesso');
+        } catch (error) {
+          toast.error(error instanceof Error ? error.message : 'Código inválido');
+        } finally {
+          setIsLoading(false);
+        }
+      },
+      clearPendingVerification: async () => {
+        await setAuthState({
+          ...authState,
+          pendingVerification: null,
+        });
       },
       signOut: async () => {
         try {
-          await AsyncStorage.removeItem("session");
+          await AsyncStorage.removeItem('session');
           await setAuthState({
             session: undefined,
             isAuthenticated: false,
             token: undefined,
             user: undefined,
+            pendingVerification: null,
           });
-          // Clear chatId after auth state is updated
-          const { setChatId } = useStore.getState();
+          const { setChatId, setGlobalStoreMessages } = useStore.getState();
           setChatId(null);
+          setGlobalStoreMessages([]);
         } catch (error) {
-          console.error("Error signing out:", error);
+          console.error('Error signing out:', error);
         }
       },
     }),
-    [setAuthState, setIsLoading],
+    [authState, setAuthState],
   );
 
   const state = useMemo(
@@ -207,14 +245,13 @@ export const AuthProvider = ({ children }: PropsWithChildren) => {
     </AuthStateContext.Provider>
   );
 };
-const useAsyncState = <T,>(
-  initialValue: T,
-): [T, (value: T) => Promise<void>] => {
+
+const useAsyncState = <T,>(initialValue: T): [T, (value: T) => Promise<void>] => {
   const [state, setState] = useState<T>(initialValue);
 
   const setAsyncState = useCallback(async (value: T) => {
     setState(value);
-    await AsyncStorage.setItem("authState", JSON.stringify(value));
+    await AsyncStorage.setItem('authState', JSON.stringify(value));
   }, []);
 
   return [state, setAsyncState];

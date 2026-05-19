@@ -3,12 +3,12 @@ import { Platform } from 'react-native'
 import { twMerge } from 'tailwind-merge'
 import type { UIMessage, ModelMessage } from 'ai'
 
-// Define a simple DBMessage type for the conversion function
 type DBMessage = {
   id: string;
-  parts: any;
+  parts?: any;
+  content?: any;
   role: string;
-  createdAt?: Date;
+  createdAt?: Date | string;
 };
 
 type Document = {
@@ -25,13 +25,13 @@ export function isValidYoutubeUrl(url: string) {
 }
 
 export function isWeb() {
-  return Platform.OS === "web";
+  return Platform.OS === 'web';
 }
 export function isNative() {
-  return Platform.OS === "ios" || Platform.OS === "android";
+  return Platform.OS === 'ios' || Platform.OS === 'android';
 }
 export function isIOS() {
-  return Platform.OS === "ios";
+  return Platform.OS === 'ios';
 }
 
 interface ApplicationError extends Error {
@@ -44,7 +44,7 @@ export const fetcher = async (url: string) => {
 
   if (!res.ok) {
     const error = new Error(
-      "An error occurred while fetching the data.",
+      'An error occurred while fetching the data.',
     ) as ApplicationError;
 
     error.info = await res.json();
@@ -57,52 +57,80 @@ export const fetcher = async (url: string) => {
 };
 
 export function getLocalStorage(key: string) {
-  if (typeof window !== "undefined") {
-    return JSON.parse(localStorage.getItem(key) || "[]");
+  if (typeof window !== 'undefined') {
+    return JSON.parse(localStorage.getItem(key) || '[]');
   }
   return [];
 }
 
 export function generateUUID(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
-    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
     return v.toString(16);
   });
 }
 
-// Convert database messages to UIMessage format (v5)
+function messageContentToParts(content: any): UIMessage['parts'] {
+  if (Array.isArray(content)) {
+    return content as UIMessage['parts'];
+  }
+
+  if (typeof content === 'string') {
+    return [{ type: 'text', text: content }];
+  }
+
+  if (content?.type === 'text' && typeof content?.text === 'string') {
+    return [{ type: 'text', text: content.text }];
+  }
+
+  if (content?.type === 'file' && typeof content?.url === 'string') {
+    return [{ type: 'file', url: content.url, mediaType: content.mediaType } as any];
+  }
+
+  if (typeof content?.content === 'string') {
+    return [{ type: 'text', text: content.content }];
+  }
+
+  return [];
+}
+
 export function convertToUIMessages(
   messages: Array<DBMessage>,
 ): Array<UIMessage> {
-  return messages.map((message) => {
-    // Extract tool invocations from parts array for backward compatibility
-    const toolInvocations: any[] = [];
+  return messages
+    .map((message) => {
+      const rawParts = Array.isArray(message.parts)
+        ? message.parts
+        : messageContentToParts(message.content);
 
-    if (message.parts && Array.isArray(message.parts)) {
-      message.parts.forEach((part: any) => {
-        if (part.type && part.type.startsWith('tool-')) {
-          const toolName = part.type.replace('tool-', '');
-          toolInvocations.push({
-            toolName,
-            toolCallId: part.toolCallId,
-            state: part.state || 'result',
-            input: part.input,
-            output: part.output,
-            result: part.result || part.output,
-          });
-        }
-      });
-    }
+      const toolInvocations: any[] = [];
 
-    return {
-      id: message.id,
-      parts: message.parts as UIMessage["parts"],
-      role: message.role as UIMessage["role"],
-      createdAt: message.createdAt,
-      toolInvocations: toolInvocations.length > 0 ? toolInvocations : undefined,
-    };
-  });
+      if (Array.isArray(rawParts)) {
+        rawParts.forEach((part: any) => {
+          if (part.type && String(part.type).startsWith('tool-')) {
+            const toolName = String(part.type).replace('tool-', '');
+            toolInvocations.push({
+              toolName,
+              toolCallId: part.toolCallId,
+              state: part.state || 'result',
+              input: part.input,
+              output: part.output,
+              result: part.result || part.output,
+            });
+          }
+        });
+      }
+
+      return {
+        id: message.id,
+        parts: rawParts as UIMessage['parts'],
+        role: message.role as UIMessage['role'],
+        createdAt: message.createdAt ? new Date(message.createdAt) : undefined,
+        toolInvocations: toolInvocations.length > 0 ? toolInvocations : undefined,
+      };
+    })
+    .filter((message) => message.parts && message.parts.length > 0);
 }
 
 export function sanitizeResponseMessages(
@@ -119,7 +147,6 @@ export function sanitizeResponseMessages(
   })
 }
 
-// In v5, we filter based on parts instead of content/toolInvocations
 export function sanitizeUIMessages(messages: Array<UIMessage>): Array<UIMessage> {
   return messages.filter(
     (message) => message.parts && message.parts.length > 0,
@@ -127,7 +154,7 @@ export function sanitizeUIMessages(messages: Array<UIMessage>): Array<UIMessage>
 }
 
 export function getMostRecentUserMessage(messages: Array<ModelMessage>) {
-  const userMessages = messages.filter((message) => message.role === "user");
+  const userMessages = messages.filter((message) => message.role === 'user');
   return userMessages.at(-1);
 }
 
@@ -142,10 +169,17 @@ export function getDocumentTimestampByIndex(
 }
 
 export function getMessageIdFromAnnotations(message: UIMessage) {
-  // In v5, annotations are part of message metadata
   const metadata = message.metadata as any;
   if (metadata?.messageIdFromServer) {
     return metadata.messageIdFromServer;
   }
   return message.id;
+}
+
+export function getTextFromMessage(message: UIMessage) {
+  const textPart = message.parts?.find((part: any) => part?.type === 'text' && typeof part?.text === 'string') as
+    | { text: string }
+    | undefined;
+
+  return textPart?.text ?? '';
 }

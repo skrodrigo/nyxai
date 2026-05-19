@@ -2,15 +2,15 @@ import { View, Text, Pressable, ScrollView } from "react-native";
 import { useAuth } from "@/services/auth/useAuth";
 import { useEffect, useState } from "react";
 import { useRouter } from "expo-router";
-import { getChatsByUserId } from "@/lib/api-client";
+import { chatsApi } from "@/lib/api-client";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useStore } from "@/lib/globalStore";
 
 type Chat = {
   id: string;
   title: string;
-  createdAt: Date;
-  userId: string;
+  updatedAt: string;
+  pinnedAt?: string | null;
 };
 
 const groupChatsByDate = (chats: Chat[]) => {
@@ -28,7 +28,7 @@ const groupChatsByDate = (chats: Chat[]) => {
 
   return chats.reduce(
     (groups: Record<string, Chat[]>, chat) => {
-      const chatDate = new Date(chat.createdAt);
+      const chatDate = new Date(chat.updatedAt);
       chatDate.setHours(0, 0, 0, 0);
 
       if (chatDate.getTime() === today.getTime()) {
@@ -64,7 +64,8 @@ export function DrawerContent() {
 
     setIsLoading(true);
     try {
-      const { chats: data } = await getChatsByUserId({ token });
+      const response = await chatsApi.list(token);
+      const data = response.data;
 
       if (Array.isArray(data)) {
         setChats(data);
